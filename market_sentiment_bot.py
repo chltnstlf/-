@@ -373,6 +373,13 @@ def generate_and_send_report(briefing_title=None, force_send=False):
 def main_loop():
     print("🚀 레버리지 과대낙폭 감시 봇이 시작되었습니다.")
     
+    # 💡 [추가] 봇 실행 시 장 상태 상관없이 1회성 시작/작동 점검 리포트 즉시 무조건 발송
+    try:
+        print("📢 봇 실행 확인: 작동 점검 리포트를 텔레그램으로 전송합니다...")
+        generate_and_send_report(briefing_title="🤖 봇 시작 / 시스템 작동 점검 리포트", force_send=True)
+    except Exception as e:
+        print(f"시작 점검 메시지 전송 실패: {e}")
+
     # 마지막 브리핑 전송 시각 저장용 (중복 발송 방지)
     last_briefing_session = None
 
@@ -410,7 +417,6 @@ def main_loop():
 
         # 10분(600초) 마다 감시 수행
         time.sleep(600)
-
 if __name__ == "__main__":
     # 스크립트 실행 시 24시간 감시 루프 진입
     main_loop()
