@@ -59,31 +59,43 @@ def get_spy_rsi(period=14):
     return round(rsi.iloc[-1], 1)
 
 
+import pandas as pd
+
 def get_aaii_sentiment():
     """
-    AAII 주간 심리지수 (Bullish / Bearish / Neutral)
-    - St. Louis Fed (FRED)의 공식 데이터 경로를 이용하여 스크래핑 차단 방지
+    AAII 공식 히스토리 엑셀 파일(sentiment.xls)을 직접 다운로드 및 파싱
+    - 봇 차단 없이 주간 최신 수치(Bullish, Neutral, Bearish)를 정확히 가져옴
     """
-    bull_url = "https://fred.stlouisfed.org/graph/fredgraph.csv?id=AAIIBULL"
-    bear_url = "https://fred.stlouisfed.org/graph/fredgraph.csv?id=AAIIBEAR"
-
+    url = "https://www.aaii.com/files/surveys/sentiment.xls"
+    
     try:
-        r_bull = requests.get(bull_url, headers=HEADERS, timeout=10)
-        r_bear = requests.get(bear_url, headers=HEADERS, timeout=10)
-        r_bull.raise_for_status()
-        r_bear.raise_for_status()
-
-        # CSV의 마지막 행에서 최신 수치 추출 (Format: YYYY-MM-DD,Value)
-        bull_line = [line for line in r_bull.text.strip().split('\n') if line][-1]
-        bear_line = [line for line in r_bear.text.strip().split('\n') if line][-1]
-
-        bullish = round(float(bull_line.split(',')[1]), 1)
-        bearish = round(float(bear_line.split(',')[1]), 1)
-        neutral = round(100.0 - (bullish + bearish), 1)
+        # AAII 공식 sentiment.xls의 'SENTIMENT' 시트를 읽어옴
+        # 상단 3행 헤더 스킵 처리
+        df = pd.read_excel(url, sheet_name="SENTIMENT", skiprows=3)
+        
+        # 'Date' 열 또는 데이터가 있는 행들만 유효하게 필터링
+        df = df.dropna(subset=['Bullish', 'Bearish'])
+        
+        if df.empty:
+            return None, None, None
+            
+        # 가장 최근(마지막) 데이터 행 가져오기
+        latest = df.iloc[-1]
+        
+        # 소수점 데이터(0.42 -> 42.0%) 퍼센티지로 변환
+        bullish = round(float(latest['Bullish']) * 100, 1) if latest['Bullish'] < 1 else round(float(latest['Bullish']), 1)
+        bearish = round(float(latest['Bearish']) * 100, 1) if latest['Bearish'] < 1 else round(float(latest['Bearish']), 1)
+        
+        # Neutral 값이 표에 없을 경우 100에서 차감하여 자동 계산
+        if 'Neutral' in latest and pd.notna(latest['Neutral']):
+            neutral = round(float(latest['Neutral']) * 100, 1) if latest['Neutral'] < 1 else round(float(latest['Neutral']), 1)
+        else:
+            neutral = round(100.0 - (bullish + bearish), 1)
 
         return bullish, neutral, bearish
+
     except Exception as e:
-        print(f"AAII 수집 중 오류: {e}")
+        print(f"AAII 엑셀 수집 중 에러 발생: {e}")
         return None, None, None
 
 
