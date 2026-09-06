@@ -63,29 +63,38 @@ def get_spy_rsi(period=14):
     rsi = 100 - (100 / (1 + rs))
     return round(rsi.iloc[-1], 1)
 
-
-def get_aaii_sentiment():
-    """AAII 주간 심리지수 (Bullish / Neutral / Bearish) 스크래핑
-    주1회(목요일)만 갱신되며, 사이트 구조가 바뀌면 깨질 수 있음.
-    실패 시 None 반환 -> 메시지에서 '데이터 없음' 처리
-    """
+def get_aaii_from_fred():
+    """FRED 공개 데이터를 통한 AAII 수집 (스크래핑 차단 위험 없음)"""
+    # FRED AAII Bullish / Bearish 최근 값 JSON
+    bull_url = "https://fred.stlouisfed.org/graph/fredgraph.csv?id=AAIIBULL"
+    bear_url = "https://fred.stlouisfed.org/graph/fredgraph.csv?id=AAIIBEAR"
+    
+    headers = {"User-Agent": "Mozilla/5.0"}
+    
     try:
-        from bs4 import BeautifulSoup
-        url = "https://www.aaii.com/sentimentsurvey"
-        r = requests.get(url, headers=HEADERS, timeout=10)
-        r.raise_for_status()
-        soup = BeautifulSoup(r.text, "html.parser")
+        res_bull = requests.get(bull_url, headers=headers, timeout=10)
+        res_bear = requests.get(bear_url, headers=headers, timeout=10)
+        
+        # 마지막 줄 (최신 데이터) 추출
+        last_bull = float(res_bull.text.strip().split('\n')[-1].split(',')[1])
+        last_bear = float(res_bear.text.strip().split('\n')[-1].split(',')[1])
+        
+        status = "보통"
+        if last_bear >= 50.0:
+            status = "🚨 극단적 비관 (매수 점검)"
+        elif last_bull >= 50.0:
+            status = "⚠️ 극단적 환희 (경계 필요)"
+            
+        return {
+            "bullish": last_bull,
+            "bearish": last_bear,
+            "status": status,
+            "success": True
+        }
+    except Exception as e:
+        print(f"FRED AAII 조회 실패: {e}")
+        return {"success": False}
 
-        # 사이트 구조가 자주 바뀌므로, 실제 값 추출 로직은
-        # 페이지 소스를 열어서 직접 확인 후 selector를 맞춰야 합니다.
-        # 아래는 예시 자리표시자입니다.
-        bullish = None
-        neutral = None
-        bearish = None
-        # TODO: 실제 셀렉터로 교체
-        return bullish, neutral, bearish
-    except Exception:
-        return None, None, None
 
 
 # ------------------------------------------------------------------
