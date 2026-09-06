@@ -1,9 +1,8 @@
 """
-미국주식 5대 심리지표 + SOXL / TQQQ / GDXU 과대낙폭 & 4차 분할매수 리포트
+미국주식 5대 심리지표 + SOXL / TQQQ / GDXU 5대 반등 조건 체크리스트 & 리포트
 - CNN 공포탐욕지수 / Put-Call Ratio / CBOE VIX / AAII 심리지수 / S&P500 RSI
-- 레버리지 3종(SOXL, TQQQ, GDXU) 전 지표 항시 모니터링
-- '전일 대비 -7% 이상 급락'을 핵심 매수 스위치로 설정
-- 과대낙폭 조건 충족 시에만 500만원(150/150/100/100) 분할매수 타점표 출력
+- 레버리지 3종(SOXL, TQQQ, GDXU) 10% 반등 5대 체크리스트 항시 수치화
+- 체크리스트 3개 이상(또는 -7% 급락) 충족 시 매수 추천 및 500만원 분할매수 표 출력
 """
 
 import os
@@ -66,13 +65,13 @@ def get_aaii_sentiment():
         return None, None, None
 
 # ------------------------------------------------------------------
-# 3. 개별 레버리지 종목 분석 함수 (SOXL / TQQQ / GDXU)
+# 3. 개별 레버리지 종목 5대 조건 정밀 분석 함수
 # ------------------------------------------------------------------
-def analyze_etf(ticker_symbol):
+def analyze_etf(ticker_symbol, vix_value):
     try:
         ticker = yf.Ticker(ticker_symbol)
-        df = ticker.history(period="6mo")
-        if df.empty or len(df) < 30:
+        df = ticker.history(period="1y")
+        if df.empty or len(df) < 50:
             return None
 
         current_price = round(df["Close"].iloc[-1], 2)
@@ -82,6 +81,32 @@ def analyze_etf(ticker_symbol):
         high_20d = df["High"].tail(20).max()
         drop_from_high = round(((current_price - high_20d) / high_20d) * 100, 1)
 
+        # 1) 거래량 체크 (당일 거래량이 20일 평균의 1.5배 이상인가)
+        vol_today = df["Volume"].iloc[-1]
+        vol_20ma = df["Volume"].tail(20).mean()
+        vol_ratio = round(vol_today / vol_20ma, 1) if vol_20ma > 0 else 0
+        cond_volume = vol_ratio >= 1.5
+
+        # 2) 지지선 중첩 체크 (볼린저 하단 이탈 OR 50일/200일선 3% 이내)
+        sma20 = df["Close"].rolling(window=20).mean().iloc[-1]
+        std20 = df["Close"].rolling(window=20).std().iloc[-1]
+        bb_lower = round(sma20 - (2 * std20), 2)
+
+        sma50 = df["Close"].rolling(window=50).mean().iloc[-1]
+        sma200 = df["Close"].rolling(window=200).mean().iloc[-1] if len(df) >= 200 else None
+
+        near_sma50 = abs(current_price - sma50) / sma50 <= 0.03
+        near_sma200 = (abs(current_price - sma200) / sma200 <= 0.03) if sma200 else False
+        is_bb_break = current_price <= bb_lower
+
+        cond_support = is_bb_break or near_sma50 or near_sma200
+
+        # 3) VIX & 5일 이격도 체크 (VIX >= 25 OR 5일 이격도 <= 92%)
+        sma5 = df["Close"].rolling(window=5).mean().iloc[-1]
+        disparity_5d = round((current_price / sma5) * 100, 1)
+        cond_vix_disparity = (vix_value is not None and vix_value >= 25) or (disparity_5d <= 92.0)
+
+        # 4) 아래꼬리 반등 / RSI 체크 (RSI <= 35 OR 저점대비 +1.5% 이상 반등)
         delta = df["Close"].diff()
         gain = delta.clip(lower=0)
         loss = -delta.clip(upper=0)
@@ -90,25 +115,25 @@ def analyze_etf(ticker_symbol):
         rs = avg_gain / avg_loss
         rsi = round((100 - (100 / (1 + rs))).iloc[-1], 1)
 
-        sma20 = df["Close"].rolling(window=20).mean().iloc[-1]
-        std20 = df["Close"].rolling(window=20).std().iloc[-1]
-        bb_lower = round(sma20 - (2 * std20), 2)
-        is_bb_break = current_price <= bb_lower
+        day_low = df["Low"].iloc[-1]
+        rebound_from_low = round(((current_price - day_low) / day_low) * 100, 1) if day_low > 0 else 0
+        cond_rebound = (rsi <= 35) or (rebound_from_low >= 1.5)
 
-        # 핵심 매수 신호 판정: 전일 대비 -7% 이상 급락 여부
-        is_daily_plunge = daily_change <= -7.0
+        # 5) 전일 대비 -7% 이상 급락 여부
+        cond_daily_plunge = daily_change <= -7.0
 
-        signals = []
-        if is_daily_plunge:
-            signals.append(f"전일대비 급락({daily_change}%)")
-        if drop_from_high <= -20.0:
-            signals.append(f"20일 고점대비({drop_from_high}%)")
-        if rsi <= 35:
-            signals.append(f"RSI 과매도({rsi})")
-        if is_bb_break:
-            signals.append(f"볼린저 하단이탈(${bb_lower})")
+        # 체크리스트 평가 (5개 항목)
+        checklist = [
+            ("1. 전일대비 급락", cond_daily_plunge, f"{daily_change}% 하락"),
+            ("2. 거래량 폭발", cond_volume, f"평소 대비 {vol_ratio}배"),
+            ("3. 지지선 중첩", cond_support, f"볼린저하단 ${bb_lower}" if is_bb_break else "주요 이평선 근접"),
+            ("4. 이격도/VIX 공포", cond_vix_disparity, f"5일 이격 {disparity_5d}% / VIX {vix_value}"),
+            ("5. 반등/RSI 과매도", cond_rebound, f"RSI {rsi} / 저점대비 +{rebound_from_low}%")
+        ]
 
-        # 500만원 분할 매수 타점 계산 (1차=현재가 / 2차=-7% / 3차=-15% / 4차=-25%)
+        score = sum(1 for _, is_met, _ in checklist if is_met)
+
+        # 500만원 분할 매수 타점 계산
         p1 = current_price
         p2 = round(p1 * 0.93, 2)
         p3 = round(p1 * 0.85, 2)
@@ -128,11 +153,8 @@ def analyze_etf(ticker_symbol):
             "daily_change": daily_change,
             "drop_from_high": drop_from_high,
             "rsi": rsi,
-            "bb_lower": bb_lower,
-            "is_bb_break": is_bb_break,
-            "is_daily_plunge": is_daily_plunge,
-            "signals": signals,
-            "signal_count": len(signals),
+            "score": score,
+            "checklist": checklist,
             "buy_plan": buy_plan
         }
     except Exception as e:
@@ -147,48 +169,45 @@ def format_etf_section(data):
     p = data["price"]
     chg = data["daily_change"]
     drop = data["drop_from_high"]
-    r = data["rsi"]
-    bb = data["bb_lower"]
-    is_bb = data["is_bb_break"]
-    is_plunge = data["is_daily_plunge"]
-    cnt = data["signal_count"]
-    signals = data["signals"]
+    score = data["score"]
+    checklist = data["checklist"]
     plan = data["buy_plan"]
 
     chg_icon = "🔺" if chg > 0 else "🔻"
     chg_str = f"+{chg}%" if chg > 0 else f"{chg}%"
-
-    # 이모지 상태 판정 (전일대비 급락 또는 과매도는 🟢)
-    chg_emoji = "🟢" if is_plunge else "⚪"
-    rsi_emoji = "🟢" if r <= 35 else ("🔴" if r >= 70 else "⚪")
     drop_emoji = "🟢" if drop <= -20.0 else "⚪"
-    bb_emoji = "🟢" if is_bb else "⚪"
 
-    bb_status = "하단 이탈" if is_bb else "상회"
+    # 체크리스트 텍스트 구성
+    checklist_lines = []
+    for title, is_met, detail in checklist:
+        mark = "[✅]" if is_met else "[❌]"
+        checklist_lines.append(f" {mark} <b>{title}</b> ({detail})")
+    checklist_text = "\n".join(checklist_lines)
 
     metrics_text = (
         f"• <b>현재가:</b> <code>${p}</code> ({chg_icon} {chg_str})\n"
-        f"• <b>20일 고점 대비:</b> {drop_emoji} {drop}%\n"
-        f"• <b>RSI(14):</b> {rsi_emoji} {r}\n"
-        f"• <b>볼린저 하단:</b> {bb_emoji} ${bb} ({bb_status})"
+        f"• <b>20일 고점 대비:</b> {drop_emoji} {drop}%\n\n"
+        f"📋 <b>[10% 반등 5대 필승 체크리스트]</b>\n"
+        f"{checklist_text}"
     )
 
-    # 매수 타점표 발동 조건: 전일 대비 -7% 이상 급락했거나, 과매도 신호 2개 이상 발생 시
-    if is_plunge or cnt >= 2:
+    # 매수 추천도 평가 (3개 이상 충족 시 매수 추천)
+    stars = "🔥" * score + "⚪" * (5 - score)
+
+    if score >= 3 or chg <= -7.0:
         return (
-            f"🚨 <b>[{sym} 긴급 과대낙폭 / 매수 타점]</b>\n"
-            f"{metrics_text}\n"
-            f"• <b>포착 신호({cnt}개):</b> {', '.join(signals)}\n\n"
+            f"🚨 <b>[{sym} 매수 추천 구간]</b> - {stars} ({score}/5개 충족)\n"
+            f"{metrics_text}\n\n"
             f"{plan}"
         )
-    elif cnt == 1:
+    elif score == 2:
         return (
-            f"⚠️ <b>[{sym} 낙폭 관찰 구간]</b> (포착 신호: {signals[0]})\n"
+            f"⚠️ <b>[{sym} 관심 관찰 구간]</b> - {stars} ({score}/5개 충족)\n"
             f"{metrics_text}"
         )
     else:
         return (
-            f"📊 <b>[{sym} 정상 범위]</b>\n"
+            f"📊 <b>[{sym} 정상/관망 구간]</b> - {stars} ({score}/5개 충족)\n"
             f"{metrics_text}"
         )
 
@@ -272,9 +291,9 @@ def run():
     rsi = get_spy_rsi()
     bullish, neutral, bearish = get_aaii_sentiment()
 
-    soxl_data = analyze_etf("SOXL")
-    tqqq_data = analyze_etf("TQQQ")
-    gdxu_data = analyze_etf("GDXU")
+    soxl_data = analyze_etf("SOXL", vix)
+    tqqq_data = analyze_etf("TQQQ", vix)
+    gdxu_data = analyze_etf("GDXU", vix)
 
     lines = [
         f"📈 <b>미국주식 심리지표 & 레버리지 리포트</b>",
