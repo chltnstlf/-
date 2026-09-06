@@ -1,5 +1,3 @@
 requests
 yfinance
 beautifulsoup4
-pandas
-xlrd
