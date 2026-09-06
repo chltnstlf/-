@@ -1,8 +1,8 @@
 """
-미국주식 5대 심리지표 + SOXL 과대낙폭 & 4차 분할매수 텔레그램 알림 봇
+미국주식 5대 심리지표 + SOXL / TQQQ / GDXU 과대낙폭 & 4차 분할매수 리포트
 - CNN 공포탐욕지수 / Put-Call Ratio / CBOE VIX / AAII 심리지수 / S&P500 RSI
-- SOXL 과대낙폭(RSI, MDD, 볼린저밴드) 및 500만원(150/150/100/100) 분할매수 가이드
-- 장중 급락 시 긴급 알림 전송 기능 지원
+- 레버리지 3종(SOXL, TQQQ, GDXU) 전 지표 항시 표시 + 상태별 이모지 적용
+- 과대낙폭 신호 발생 시에만 500만원(150/150/100/100) 분할매수 타점표 출력
 """
 
 import os
@@ -65,25 +65,22 @@ def get_aaii_sentiment():
         return None, None, None
 
 # ------------------------------------------------------------------
-# 3. SOXL 과대낙폭 및 4단계 분할 매수 수집 함수
+# 3. 개별 레버리지 종목 분석 함수 (SOXL / TQQQ / GDXU)
 # ------------------------------------------------------------------
-def get_soxl_metrics():
+def analyze_etf(ticker_symbol):
     try:
-        soxl = yf.Ticker("SOXL")
-        df = soxl.history(period="6mo")
+        ticker = yf.Ticker(ticker_symbol)
+        df = ticker.history(period="6mo")
         if df.empty or len(df) < 30:
             return None
 
-        # 현재가 및 일간 변동률
         current_price = round(df["Close"].iloc[-1], 2)
         prev_close = df["Close"].iloc[-2]
         daily_change = round(((current_price - prev_close) / prev_close) * 100, 2)
 
-        # 20일 고점 대비 낙폭 (MDD)
         high_20d = df["High"].tail(20).max()
         drop_from_high = round(((current_price - high_20d) / high_20d) * 100, 1)
 
-        # RSI(14)
         delta = df["Close"].diff()
         gain = delta.clip(lower=0)
         loss = -delta.clip(upper=0)
@@ -92,83 +89,138 @@ def get_soxl_metrics():
         rs = avg_gain / avg_loss
         rsi = round((100 - (100 / (1 + rs))).iloc[-1], 1)
 
-        # 볼린저 밴드 하단 (20일 SMA, 2표준편차)
         sma20 = df["Close"].rolling(window=20).mean().iloc[-1]
         std20 = df["Close"].rolling(window=20).std().iloc[-1]
         bb_lower = round(sma20 - (2 * std20), 2)
         is_bb_break = current_price <= bb_lower
 
-        # 과대낙폭 신호 수집
         signals = []
+        if daily_change <= -7.0:
+            signals.append(f"당일 급락({daily_change}%)")
         if drop_from_high <= -20.0:
-            signals.append(f"고점대비 낙폭 심화({drop_from_high}%)")
+            signals.append(f"고점대비 폭락({drop_from_high}%)")
         if rsi <= 35:
             signals.append(f"RSI 과매도({rsi})")
         if is_bb_break:
-            signals.append(f"볼린저밴드 하단 이탈(${bb_lower})")
+            signals.append(f"볼린저 하단이탈(${bb_lower})")
 
-        # 4단계 분할 매수 가격 타점 계산 (500만원 예산 기준)
+        # 500만원 분할 매수 타점 계산
         p1 = current_price
-        p2 = round(p1 * 0.93, 2)  # -7%
-        p3 = round(p1 * 0.85, 2)  # -15%
-        p4 = round(p1 * 0.75, 2)  # -25%
+        p2 = round(p1 * 0.93, 2)
+        p3 = round(p1 * 0.85, 2)
+        p4 = round(p1 * 0.75, 2)
 
         buy_plan = (
-            f"💰 <b>[500만원 분할 매수 목표 가이드]</b>\n"
-            f"• 1차(150만원 / 30%): <b>${p1}</b> (현재가 진입)\n"
-            f"• 2차(150만원 / 30%): <b>${p2}</b> (-7% 추가하락 시)\n"
-            f"• 3차(100만원 / 20%): <b>${p3}</b> (-15% 추가하락 시)\n"
-            f"• 4차(100만원 / 20%): <b>${p4}</b> (-25% 추가하락 패닉시)"
+            f"💼 <b>[{ticker_symbol} 500만 원 분할 매수 타점]</b>\n"
+            f"├ <b>1차 (150만/30%)</b> : <code>${p1}</code> (현재가 진입)\n"
+            f"├ <b>2차 (150만/30%)</b> : <code>${p2}</code> (-7% 추가하락)\n"
+            f"├ <b>3차 (100만/20%)</b> : <code>${p3}</code> (-15% 추가하락)\n"
+            f"└ <b>4차 (100만/20%)</b> : <code>${p4}</code> (-25% 패닉셀ing)"
         )
 
         return {
+            "symbol": ticker_symbol,
             "price": current_price,
             "daily_change": daily_change,
             "drop_from_high": drop_from_high,
             "rsi": rsi,
             "bb_lower": bb_lower,
+            "is_bb_break": is_bb_break,
             "signals": signals,
             "signal_count": len(signals),
             "buy_plan": buy_plan
         }
     except Exception as e:
-        print(f"SOXL 데이터 분석 실패: {e}")
+        print(f"{ticker_symbol} 데이터 분석 실패: {e}")
         return None
 
+def format_etf_section(data):
+    if not data:
+        return "⚠️ 데이터 수집 실패"
+
+    sym = data["symbol"]
+    p = data["price"]
+    chg = data["daily_change"]
+    drop = data["drop_from_high"]
+    r = data["rsi"]
+    bb = data["bb_lower"]
+    is_bb = data["is_bb_break"]
+    cnt = data["signal_count"]
+    signals = data["signals"]
+    plan = data["buy_plan"]
+
+    # 등락 표기 이모지
+    chg_icon = "🔺" if chg > 0 else "🔻"
+    chg_str = f"+{chg}%" if chg > 0 else f"{chg}%"
+
+    # 상태별 이모지 (과매도/매수기회=🟢, 과열=🔴, 중립/정상=⚪)
+    rsi_emoji = "🟢" if r <= 35 else ("🔴" if r >= 70 else "⚪")
+    drop_emoji = "🟢" if drop <= -20.0 else "⚪"
+    bb_emoji = "🟢" if is_bb else "⚪"
+
+    bb_status = "하단 이탈" if is_bb else "상회"
+
+    # 전 수치 공통 상세 출력
+    metrics_text = (
+        f"• <b>현재가:</b> <code>${p}</code> ({chg_icon} {chg_str})\n"
+        f"• <b>20일 고점 대비:</b> {drop_emoji} {drop}%\n"
+        f"• <b>RSI(14):</b> {rsi_emoji} {r}\n"
+        f"• <b>볼린저 하단:</b> {bb_emoji} ${bb} ({bb_status})"
+    )
+
+    # 과대낙폭 신호 발생 시 (당일 -7% 이하 또는 신호 2개 이상)
+    if chg <= -7.0 or cnt >= 2:
+        return (
+            f"🚨 <b>[{sym} 긴급 과대낙폭 / 매수 타점]</b>\n"
+            f"{metrics_text}\n"
+            f"• <b>포착 신호({cnt}개):</b> {', '.join(signals)}\n\n"
+            f"{plan}"
+        )
+    elif cnt == 1:
+        return (
+            f"⚠️ <b>[{sym} 낙폭 관찰 구간]</b> (포착 신호: {signals[0]})\n"
+            f"{metrics_text}"
+        )
+    else:
+        return (
+            f"📊 <b>[{sym} 정상 범위]</b>\n"
+            f"{metrics_text}"
+        )
+
 # ------------------------------------------------------------------
-# 4. 판정 문구 함수들
+# 4. 시장 지표 판정 문구 함수들
 # ------------------------------------------------------------------
 def judge_fear_greed(score):
-    if score is None: return "데이터 없음"
-    if score <= 25: return f"{score} → 극단적 공포 (매수 점검 구간)"
-    if score >= 75: return f"{score} → 극단적 탐욕 (과열 경계 구간)"
-    return f"{score} → 중립~보통 범위"
+    if score is None: return "⚪ 데이터 없음"
+    if score <= 25: return f"🟢 <b>{score}</b> (극단적 공포 - 매수 점검)"
+    if score >= 75: return f"🔴 <b>{score}</b> (극단적 탐욕 - 과열 경계)"
+    return f"⚪ <b>{score}</b> (중립~보통)"
 
 def judge_putcall(score):
-    if score is None: return "데이터 없음"
-    if score <= 25: return f"{score} → 콜 쏠림(과도한 낙관) 근접"
-    if score >= 75: return f"{score} → 풋 쏠림(공포) 근접"
-    return f"{score} → 중립 범위"
+    if score is None: return "⚪ 데이터 없음"
+    if score <= 25: return f"🔴 <b>{score}</b> (콜 쏠림 - 과도한 낙관)"
+    if score >= 75: return f"🟢 <b>{score}</b> (풋 쏠림 - 공포 진입)"
+    return f"⚪ <b>{score}</b> (중립 범위)"
 
 def judge_vix(vix):
-    if vix is None: return "데이터 없음"
-    if vix >= 40: return f"{vix} → 40 이상, 패닉·급등 구간"
-    if vix <= 13: return f"{vix} → 12~13대, 장기 저공비행(안일함 점검)"
-    return f"{vix} → 평온~경계 범위"
+    if vix is None: return "⚪ 데이터 없음"
+    if vix >= 40: return f"🟢 <b>{vix}</b> (40 이상 - 패닉·급등 구간)"
+    if vix <= 13: return f"🔴 <b>{vix}</b> (13 이하 - 안일함/과열 점검)"
+    return f"⚪ <b>{vix}</b> (평온~경계 범위)"
 
 def judge_rsi(rsi):
-    if rsi is None: return "데이터 없음"
-    if rsi <= 30: return f"{rsi} → 30 근접/이하, 과매도(공포)"
-    if rsi >= 70: return f"{rsi} → 70 이상, 과매수(과열)"
-    return f"{rsi} → 중립 범위"
+    if rsi is None: return "⚪ 데이터 없음"
+    if rsi <= 30: return f"🟢 <b>{rsi}</b> (30 이하 - 과매도/공포)"
+    if rsi >= 70: return f"🔴 <b>{rsi}</b> (70 이상 - 과매수/과열)"
+    return f"⚪ <b>{rsi}</b> (중립 범위)"
 
 def judge_aaii(bullish, neutral, bearish):
-    if bearish is None or bullish is None: return "데이터 없음"
+    if bearish is None or bullish is None: return "⚪ 데이터 없음"
     spread = round(bullish - bearish, 1)
-    msg = f"Bull {bullish}% / Neutral {neutral}% / Bear {bearish}%"
-    if bearish >= 50: return f"{msg} → Bearish 50%↑ 역발상 매수 점검"
-    if bullish >= 50 and spread >= 20: return f"{msg} (스프레드 +{spread}%) → Bullish 50%↑ 과열 경계"
-    return f"{msg} → 중립 범위"
+    msg = f"Bull {bullish}% / Bear {bearish}%"
+    if bearish >= 50: return f"🟢 <b>{msg}</b> (Bearish 50%↑ 역발상 매수)"
+    if bullish >= 50 and spread >= 20: return f"🔴 <b>{msg}</b> (Bullish 50%↑ 과열)"
+    return f"⚪ <b>{msg}</b> (중립)"
 
 def get_overall_opinion(fg, putcall, vix, rsi, aaii_bull, aaii_bear):
     fear_count = 0
@@ -189,9 +241,11 @@ def get_overall_opinion(fg, putcall, vix, rsi, aaii_bull, aaii_bear):
         if aaii_bear >= 50: fear_count += 1
         elif aaii_bull >= 50 and (aaii_bull - aaii_bear) >= 20: greed_count += 1
 
-    if fear_count >= 2: return f"🟢 <b>[종합 의견: 역발상 매수 점검]</b> (공포 신호 {fear_count}개 감지 - 분할 매수 고려)"
-    elif greed_count >= 2: return f"🔴 <b>[종합 의견: 과열 경계 / 현금 확보]</b> (과열 신호 {greed_count}개 감지 - 비중 축소 고려)"
-    return "⚪ <b>[종합 의견: 중립 / 관망 범위]</b>"
+    if fear_count >= 2:
+        return f"💡 <b>종합 의견:</b> 🟢 <b>역발상 매수 점검</b> (공포 신호 {fear_count}개 감지)"
+    elif greed_count >= 2:
+        return f"💡 <b>종합 의견:</b> 🔴 <b>과열 경계 / 현금 확보</b> (과열 신호 {greed_count}개 감지)"
+    return "💡 <b>종합 의견:</b> ⚪ <b>중립 / 관망 유효</b>"
 
 # ------------------------------------------------------------------
 # 5. 텔레그램 전송
@@ -208,53 +262,34 @@ def send_telegram(text: str):
 def run():
     today = dt.datetime.now().strftime("%Y-%m-%d %H:%M")
 
-    # 지표 수집
     fg_score, putcall_score = get_cnn_fear_greed()
     vix = get_vix()
     rsi = get_spy_rsi()
     bullish, neutral, bearish = get_aaii_sentiment()
-    soxl_data = get_soxl_metrics()
 
-    # SOXL 메시지 구성
-    soxl_msg = "SOXL 데이터 수집 실패"
-    if soxl_data:
-        p = soxl_data["price"]
-        chg = soxl_data["daily_change"]
-        drop = soxl_data["drop_from_high"]
-        r = soxl_data["rsi"]
-        cnt = soxl_data["signal_count"]
-        plan = soxl_data["buy_plan"]
-
-        # 긴급 급락 신호 또는 과대낙폭 매수 타점 발생 조건
-        if chg <= -7.0 or cnt >= 2:
-            soxl_msg = (
-                f"🚨 <b>[SOXL 긴급 과대낙폭 / 급락 알림]</b>\n"
-                f"• 현재가: <b>${p}</b> (전일대비 {chg}%)\n"
-                f"• 20일 고점대비: <b>{drop}%</b> / RSI: <b>{r}</b>\n"
-                f"• 충족 신호({cnt}개): {', '.join(soxl_data['signals'])}\n\n"
-                f"{plan}"
-            )
-        elif cnt == 1:
-            soxl_msg = (
-                f"⚠️ <b>[SOXL 낙폭 관찰 구간]</b> (${p} / 전일대비 {chg}%)\n"
-                f"• 감지된 신호: {soxl_data['signals'][0]}"
-            )
-        else:
-            soxl_msg = f"⚪ <b>[SOXL 정상 범위]</b> (${p} / 전일대비 {chg}%)"
+    soxl_data = analyze_etf("SOXL")
+    tqqq_data = analyze_etf("TQQQ")
+    gdxu_data = analyze_etf("GDXU")
 
     lines = [
-        f"<b>미국주식 심리지표 & SOXL 분할매수 알림</b> ({today})",
-        "",
-        f"1) CNN 공포탐욕지수: {judge_fear_greed(fg_score)}",
-        f"2) Put/Call (CNN 하위지표): {judge_putcall(putcall_score)}",
-        f"3) CBOE VIX: {judge_vix(vix)}",
-        f"4) AAII 심리지수: {judge_aaii(bullish, neutral, bearish)}",
-        f"5) S&P500(SPY) RSI: {judge_rsi(rsi)}",
-        "",
-        "----------------------------------------",
-        soxl_msg,
-        "----------------------------------------",
-        "",
+        f"📈 <b>미국주식 심리지표 & 레버리지 리포트</b>",
+        f"🕒 <i>{today} 기준</i>",
+        "━━━━━━━━━━━━━━━━━━━━",
+        f"<b>1. CNN 공포탐욕지수:</b> {judge_fear_greed(fg_score)}",
+        f"<b>2. Put/Call Ratio:</b> {judge_putcall(putcall_score)}",
+        f"<b>3. CBOE VIX:</b> {judge_vix(vix)}",
+        f"<b>4. AAII 심리지수:</b> {judge_aaii(bullish, neutral, bearish)}",
+        f"<b>5. S&P500 RSI:</b> {judge_rsi(rsi)}",
+        "━━━━━━━━━━━━━━━━━━━━",
+        f"📌 <b>[SOXL 분석]</b>",
+        format_etf_section(soxl_data),
+        "------------------------------------",
+        f"📌 <b>[TQQQ 분석]</b>",
+        format_etf_section(tqqq_data),
+        "------------------------------------",
+        f"📌 <b>[GDXU 분석]</b>",
+        format_etf_section(gdxu_data),
+        "━━━━━━━━━━━━━━━━━━━━",
         get_overall_opinion(fg_score, putcall_score, vix, rsi, bullish, bearish)
     ]
 
