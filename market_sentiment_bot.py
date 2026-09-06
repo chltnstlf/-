@@ -1,8 +1,9 @@
 """
 미국주식 5대 심리지표 + SOXL / TQQQ / GDXU 과대낙폭 & 4차 분할매수 리포트
 - CNN 공포탐욕지수 / Put-Call Ratio / CBOE VIX / AAII 심리지수 / S&P500 RSI
-- 레버리지 3종(SOXL, TQQQ, GDXU) 전 지표 항시 표시 + 상태별 이모지 적용
-- 과대낙폭 신호 발생 시에만 500만원(150/150/100/100) 분할매수 타점표 출력
+- 레버리지 3종(SOXL, TQQQ, GDXU) 전 지표 항시 모니터링
+- '전일 대비 -7% 이상 급락'을 핵심 매수 스위치로 설정
+- 과대낙폭 조건 충족 시에만 500만원(150/150/100/100) 분할매수 타점표 출력
 """
 
 import os
@@ -94,17 +95,20 @@ def analyze_etf(ticker_symbol):
         bb_lower = round(sma20 - (2 * std20), 2)
         is_bb_break = current_price <= bb_lower
 
+        # 핵심 매수 신호 판정: 전일 대비 -7% 이상 급락 여부
+        is_daily_plunge = daily_change <= -7.0
+
         signals = []
-        if daily_change <= -7.0:
-            signals.append(f"당일 급락({daily_change}%)")
+        if is_daily_plunge:
+            signals.append(f"전일대비 급락({daily_change}%)")
         if drop_from_high <= -20.0:
-            signals.append(f"고점대비 폭락({drop_from_high}%)")
+            signals.append(f"20일 고점대비({drop_from_high}%)")
         if rsi <= 35:
             signals.append(f"RSI 과매도({rsi})")
         if is_bb_break:
             signals.append(f"볼린저 하단이탈(${bb_lower})")
 
-        # 500만원 분할 매수 타점 계산
+        # 500만원 분할 매수 타점 계산 (1차=현재가 / 2차=-7% / 3차=-15% / 4차=-25%)
         p1 = current_price
         p2 = round(p1 * 0.93, 2)
         p3 = round(p1 * 0.85, 2)
@@ -126,6 +130,7 @@ def analyze_etf(ticker_symbol):
             "rsi": rsi,
             "bb_lower": bb_lower,
             "is_bb_break": is_bb_break,
+            "is_daily_plunge": is_daily_plunge,
             "signals": signals,
             "signal_count": len(signals),
             "buy_plan": buy_plan
@@ -145,22 +150,22 @@ def format_etf_section(data):
     r = data["rsi"]
     bb = data["bb_lower"]
     is_bb = data["is_bb_break"]
+    is_plunge = data["is_daily_plunge"]
     cnt = data["signal_count"]
     signals = data["signals"]
     plan = data["buy_plan"]
 
-    # 등락 표기 이모지
     chg_icon = "🔺" if chg > 0 else "🔻"
     chg_str = f"+{chg}%" if chg > 0 else f"{chg}%"
 
-    # 상태별 이모지 (과매도/매수기회=🟢, 과열=🔴, 중립/정상=⚪)
+    # 이모지 상태 판정 (전일대비 급락 또는 과매도는 🟢)
+    chg_emoji = "🟢" if is_plunge else "⚪"
     rsi_emoji = "🟢" if r <= 35 else ("🔴" if r >= 70 else "⚪")
     drop_emoji = "🟢" if drop <= -20.0 else "⚪"
     bb_emoji = "🟢" if is_bb else "⚪"
 
     bb_status = "하단 이탈" if is_bb else "상회"
 
-    # 전 수치 공통 상세 출력
     metrics_text = (
         f"• <b>현재가:</b> <code>${p}</code> ({chg_icon} {chg_str})\n"
         f"• <b>20일 고점 대비:</b> {drop_emoji} {drop}%\n"
@@ -168,8 +173,8 @@ def format_etf_section(data):
         f"• <b>볼린저 하단:</b> {bb_emoji} ${bb} ({bb_status})"
     )
 
-    # 과대낙폭 신호 발생 시 (당일 -7% 이하 또는 신호 2개 이상)
-    if chg <= -7.0 or cnt >= 2:
+    # 매수 타점표 발동 조건: 전일 대비 -7% 이상 급락했거나, 과매도 신호 2개 이상 발생 시
+    if is_plunge or cnt >= 2:
         return (
             f"🚨 <b>[{sym} 긴급 과대낙폭 / 매수 타점]</b>\n"
             f"{metrics_text}\n"
