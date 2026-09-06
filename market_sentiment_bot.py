@@ -368,19 +368,46 @@ def generate_and_send_report(briefing_title=None, force_send=False):
     print(f"[{dt.datetime.now().strftime('%H:%M:%S')}] 텔레그램 리포트 전송 완료!")
 
 # ------------------------------------------------------------------
-# 6. 메인 스케줄러 루프 (24시간 자동 실행 엔진)
+# 6. GitHub Actions (1회 실행) 및 내 PC (24시간 실행) 통합 실행부
 # ------------------------------------------------------------------
+def run_once():
+    """GitHub Actions 전용: 15분마다 깃허브가 켜져서 1회 감시만 수행하고 종료되는 함수"""
+    status_info = get_market_status_info()
+    ny_time_num = status_info["ny_time_num"]
+    weekday = status_info["weekday"]
+
+    briefing_type = None
+
+    # 평일일 때 4대 주요 장 전환 시점 정기 브리핑 판정 (15분 간격에 맞게 감지)
+    if weekday < 5:
+        if 400 <= ny_time_num < 415:
+            briefing_type = "미국 프리마켓 개장 브리핑"
+        elif 930 <= ny_time_num < 945:
+            briefing_type = "미국 정규장(본장) 개장 브리핑"
+        elif 1600 <= ny_time_num < 1615:
+            briefing_type = "미국 정규장 마감 / 애프터마켓 개장 브리핑"
+        elif 2000 <= ny_time_num < 2015:
+            briefing_type = "미국 애프터마켓 마감 브리핑"
+
+    if briefing_type:
+        # 정기 브리핑 시점이면 무조건 브리핑 전송
+        generate_and_send_report(briefing_title=briefing_type, force_send=True)
+    elif status_info["is_market_open"]:
+        # 장중(프리/본장/애프터)일 때만 과대낙폭 조건 감시 (조건 미충족 시 무소음/무전송)
+        generate_and_send_report(force_send=False)
+    else:
+        print("미국 장외/휴장 시간입니다. (무소음 대기)")
+
 def main_loop():
+    """내 컴퓨터 전용: PC를 켜두고 24시간 계속 돌릴 때 사용하는 무한 루프 함수"""
     print("🚀 레버리지 과대낙폭 감시 봇이 시작되었습니다.")
     
-    # 💡 [추가] 봇 실행 시 장 상태 상관없이 1회성 시작/작동 점검 리포트 즉시 무조건 발송
     try:
         print("📢 봇 실행 확인: 작동 점검 리포트를 텔레그램으로 전송합니다...")
         generate_and_send_report(briefing_title="🤖 봇 시작 / 시스템 작동 점검 리포트", force_send=True)
     except Exception as e:
         print(f"시작 점검 메시지 전송 실패: {e}")
 
-    # 마지막 브리핑 전송 시각 저장용 (중복 발송 방지)
     last_briefing_session = None
 
     while True:
@@ -389,7 +416,6 @@ def main_loop():
             ny_time_num = status_info["ny_time_num"]
             weekday = status_info["weekday"]
 
-            # 평일인 경우 4대 장 전환 시점 체크 (정기 브리핑 무조건 발송)
             briefing_type = None
             if weekday < 5:
                 if 400 <= ny_time_num < 410 and last_briefing_session != "PRE_OPEN":
@@ -406,17 +432,19 @@ def main_loop():
                     last_briefing_session = "AFTER_CLOSE"
 
             if briefing_type:
-                # 정기 브리핑 시점: 무조건 전송
                 generate_and_send_report(briefing_title=briefing_type, force_send=True)
             elif status_info["is_market_open"]:
-                # 장중일 때: 10분 간격 감시 (과대낙폭 감지시에만 긴급 알림 전송)
                 generate_and_send_report(force_send=False)
 
         except Exception as e:
             print(f"메인 루프 에러 발생: {e}")
 
-        # 10분(600초) 마다 감시 수행
         time.sleep(600)
+
 if __name__ == "__main__":
-    # 스크립트 실행 시 24시간 감시 루프 진입
-    main_loop()
+    # 💡 깃허브 액션으로 동작할 때 (RUN_ONCE 환경변수가 true일 때)
+    if os.environ.get("RUN_ONCE") == "true":
+        run_once()
+    # 💡 내 PC에서 직접 'python market_sentiment_bot.py'로 켰을 때
+    else:
+        main_loop()
