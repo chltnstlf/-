@@ -2,28 +2,33 @@ name: Market Sentiment & SOXL Alert Bot
 
 on:
   schedule:
-    # 1) 매일 한국시간 오전 9:00 (UTC 00:00) 일간 종합 브리핑
+    # 1) 매일 한국시간 오전 09:00 (UTC 00:00) 일간 종합 브리핑
     - cron: '0 0 * * *'
     
-    # 2) 미국 정규장 시간(한국시간 22:30 ~ 05:00 / UTC 13:30 ~ 20:00) 동안 1시간마다 장중 급락 감시
-    - cron: '30 13,14,15,16,17,18,19,20 * * 1-5'
+    # 2) 미국 정규장 감시 (UTC 13:30 ~ 21:30 간격 감시, 서머타임/동계 통합 커버)
+    - cron: '30 13-21 * * 1-5'
 
-  workflow_dispatch: # 수동 실행 버튼 활성화
+  workflow_dispatch: # 수동 실행 버튼
+
+# 깃허브 리포지토리에 state.json을 자동 저장(Commit)하기 위한 쓰기 권한 부여
+permissions:
+  contents: write
 
 jobs:
   run-bot:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout Repository
-        uses: actions/checkout@v3
+        uses: actions/checkout@v4 # 최신 v4 버전 권장
 
       - name: Set up Python
-        uses: actions/setup-python@v4
+        uses: actions/setup-python@v5 # 최신 v5 버전 권장
         with:
           python-version: '3.10'
 
       - name: Install Dependencies
         run: |
+          python -m pip install --upgrade pip
           pip install -r requirements.txt
 
       - name: Run Market Bot
@@ -31,3 +36,12 @@ jobs:
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
         run: python market_sentiment_bot.py
+
+      # [핵심] 변경된 매매 상태(trading_state.json)를 깃허브에 자동 커밋 및 푸시
+      - name: Commit and Push State Changes
+        run: |
+          git config --local user.email "action@github.com"
+          git config --local user.name "GitHub Action"
+          git add trading_state.json || true
+          git commit -m "Auto-update trading state [skip ci]" || true
+          git push
