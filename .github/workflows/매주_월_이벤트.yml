@@ -2,7 +2,7 @@ name: Weekly Economic Calendar Bot
 
 on:
   schedule:
-    - cron: '0 0 * * 1'
+    - cron: '10 12,14,23 * * *'
   workflow_dispatch:
 
 jobs:
