@@ -26,7 +26,7 @@ def generate_report_with_gemini():
 3. 수집된 일정을 바탕으로 지표 간의 연쇄 파급력을 계산하여 아래 3가지 카테고리로 나누어 입체적으로 분석하라:
    - 💡 **[시장 전반 & 통화정책]**: 국채금리, 달러 인덱스, 연준 금리 경로 관점
    - 🟡 **[금 & 금 채굴주(GDXU) 관점]**: 실질금리, 유동성, 3배 레버리지 변동성 대응 타점
-   - 💻 **[반도체 & 빅테크(SOXX/NVDA) 관점]**: 금리/할인율, AI CapEx, 전방 IT 수요 파급력
+   - 💻 **[반도체 & 빅테크(SOXX/SOXL 및 관련주) 관점]**: 금리/할인율, AI CapEx, 전방 IT 수요 파급력
 
 [출력 포맷]
 📊 **[주간 미국 핵심 경제 일정 & Gemini AI 브리핑]**
@@ -52,7 +52,7 @@ def generate_report_with_gemini():
 """
 
     try:
-        # gemini-3.6-flash 모델 적용
+        # gemini-3.6-flash 최신 모델 적용
         response = client.models.generate_content(
             model="gemini-3.6-flash",
             contents=prompt,
