@@ -1,7 +1,8 @@
 """
-미국증시 3대 정기 브리핑(08시/21시/23시) + 3개 이상 심리지표 극단 공포 시 긴급 알림 봇
-- 정기 브리핑: 08:00 KST (마감), 21:00 KST (프리마켓/지표), 23:00 KST (본장 방향성)
-- 긴급 알림: 6대 심리지표 중 3개 이상 '극단적 공포' 조건 달성 시 🚨 긴급 매수 타점 경보 전송
+미국증시 3대 정기 브리핑 + 긴급 알림 + 수동 조회 통합 봇
+- 정기 브리핑: 08:00 KST (마감), 21:00 KST (프리마켓), 23:00 KST (본장)
+- 긴급 알림: 6대 심리지표 중 3개 이상 '극단적 공포' 조건 충족 시에만 전송
+- 수동 조회: 버튼 클릭/수동 실행 시 조건 상관없이 즉시 실시간 리포트 전송
 """
 
 import os
@@ -181,7 +182,7 @@ def judge_aaii(bullish, neutral, bearish):
     return f"⚪ <b>{msg}</b> (중립)"
 
 def check_extreme_fear_alerts(fg, pc, vix, vxn, rsi, bearish):
-    """6개 심리지표 중 3개 이상 '극단적 공포' 조건 충족 시 알림 트리거"""
+    """6개 심리지표 중 3개 이상 '극단적 공포' 조건 충족 여부 확인"""
     fear_triggers = []
 
     if fg is not None and fg <= 25:
@@ -218,9 +219,15 @@ def send_telegram(text: str):
             print(f"텔레그램 전송 실패 ({chat_id}): {e}")
 
 # ------------------------------------------------------------------
-# 5. 리포트 생성 및 전송
+# 5. 리포트 생성 및 구분 발송 함수
 # ------------------------------------------------------------------
-def generate_and_send_report(briefing_title=None, is_emergency=False):
+def generate_and_send_report(mode="MANUAL", briefing_title=None):
+    """
+    mode 옵션:
+    - "BRIEFING": 정기 브리핑 (무조건 발송)
+    - "EMERGENCY": 긴급 알림 모니터링 (3개 이상 공포 시에만 발송)
+    - "MANUAL": 수동 요청/테스트 실행 (무조건 발송)
+    """
     status_info = get_market_status_info()
     
     # 지표 수집
@@ -230,11 +237,11 @@ def generate_and_send_report(briefing_title=None, is_emergency=False):
     rsi = get_spy_rsi()
     bullish, neutral, bearish = get_aaii_sentiment()
 
-    # 긴급 알림 검증
+    # 긴급 알림 조건 검증
     is_triggered, triggers = check_extreme_fear_alerts(fg_score, putcall_score, vix, vxn, rsi, bearish)
 
-    # 정기 실행인데 긴급 알림도 아니고 브리핑 타이밍도 아니면 스킵
-    if is_emergency and not is_triggered:
+    # 모니터링 모드인데 긴급 알림 조건 미충족 시 전송 안 함
+    if mode == "EMERGENCY" and not is_triggered:
         print("긴급 알림 조건 미충족 (극단 공포 3개 미만) -> 전송 스킵")
         return
 
@@ -252,20 +259,20 @@ def generate_and_send_report(briefing_title=None, is_emergency=False):
     tnx_p, tnx_c     = get_market_data("^TNX", is_yield=True)
     btc_p, btc_c     = get_market_data("BTC-USD")
 
-    # 헤더 제목 구성
-    if is_triggered and is_emergency:
-        title_header = f"🚨 <b>[긴급 매수 타점 경보: 공포 지표 {len(triggers)}개 동시 감지!]</b>\n"
-    elif briefing_title:
-        title_header = f"📢 <b>[{briefing_title}]</b>\n"
-    else:
-        title_header = "📈 <b>미국증시 실시간 리포트</b>\n"
+    # [구분 1] 헤더 타이틀 명확히 분기
+    if mode == "EMERGENCY":
+        title_header = f"🚨 <b>[긴급 알림 | 매수 타점 경보 (공포 지표 {len(triggers)}개 감지)]</b>\n"
+    elif mode == "BRIEFING":
+        title_header = f"📢 <b>[정기 브리핑 | {briefing_title}]</b>\n"
+    else: # MANUAL
+        title_header = "🔍 <b>[수동 요청 | 실시간 증시 점검 리포트]</b>\n"
 
     lines = [
         title_header,
         status_info["header_time_str"]
     ]
 
-    # 긴급 사유 강조 표시
+    # 긴급 공포 조건 감지 시 사유 표시 (수동 요청 시에도 감지되었으면 알려줌)
     if is_triggered:
         lines.append("━━━━━━━━━━━━━━━━━━━━")
         lines.append("🔥 <b>[긴급 공포 감지 사유]</b>")
@@ -299,50 +306,58 @@ def generate_and_send_report(briefing_title=None, is_emergency=False):
     ])
 
     send_telegram("\n".join(lines))
-    print(f"[{dt.datetime.now().strftime('%H:%M:%S')}] 리포트 전송 완료!")
+    print(f"[{dt.datetime.now().strftime('%H:%M:%S')}] [{mode}] 리포트 전송 완료!")
 
 # ------------------------------------------------------------------
-# 6. 실행부 (GitHub Actions & 내 PC 분기)
+# 6. 실행부 (GitHub Actions & 수동 실행 완벽 분기)
 # ------------------------------------------------------------------
 def run_once():
-    """GitHub Actions용: 실행 시점에 따라 정기 브리핑 or 긴급 체크 실행"""
+    """GitHub Actions 및 단발성 실행 전용"""
     status = get_market_status_info()
     h, m = status["kst_hour"], status["kst_minute"]
 
-    # 1) 하루 3회 정기 브리핑 시간대 판정 (KST 기준)
-    if h == 8 and m < 20:
-        generate_and_send_report(briefing_title="☀️ 아침 미국장 마감 & 국내장 대비 브리핑")
+    # 수동 실행 변수 체크 (깃허브 수동버튼 누름 or 컴퓨터 환경변수로 지정)
+    is_manual = (
+        os.environ.get("MANUAL_RUN") == "true" or 
+        os.environ.get("GITHUB_EVENT_NAME") == "workflow_dispatch"
+    )
+
+    if is_manual:
+        # 수동 트리거일 경우 시간 무관하게 즉시 발송
+        generate_and_send_report(mode="MANUAL")
+    elif h == 8 and m < 20:
+        generate_and_send_report(mode="BRIEFING", briefing_title="☀️ 아침 미국장 마감 & 국내장 대비")
     elif h == 21 and m < 20:
-        generate_and_send_report(briefing_title="🌙 저녁 미국 프리마켓 & 지표발표 점검 브리핑")
+        generate_and_send_report(mode="BRIEFING", briefing_title="🌙 저녁 프리마켓 & 지표발표 점검")
     elif h == 23 and m < 20:
-        generate_and_send_report(briefing_title="🌃 밤 미국 본장 개장 수급 브리핑")
+        generate_and_send_report(mode="BRIEFING", briefing_title="🌃 밤 미국 본장 개장 수급 점검")
     else:
-        # 2) 정기 시간이 아니면 '긴급 조건(3개 이상 극단공포)'일 때만 전송
-        generate_and_send_report(is_emergency=True)
+        # 자동 크론 정기 체크 시에는 긴급 조건일 때만 발송
+        generate_and_send_report(mode="EMERGENCY")
 
 def main_loop():
-    """내 PC용: 24시간 돌며 3회 정기 브리핑 + 15분마다 긴급 모니터링"""
-    print("🚀 하루 3회 브리핑 + 긴급 감지 알림 봇이 시작되었습니다.")
+    """내 PC에서 24시간 돌릴 때"""
+    print("🚀 봇이 시작되었습니다. (시작 즉시 점검 리포트 전송)")
+    generate_and_send_report(mode="MANUAL")
+
     last_briefing_hour = -1
 
     while True:
         status = get_market_status_info()
         h = status["kst_hour"]
 
-        # 정기 브리핑 (08시, 21시, 23시 정각 무렵 1회 발송)
         if h in [8, 21, 23] and h != last_briefing_hour:
             titles = {
-                8: "☀️ 아침 미국장 마감 & 국내장 대비 브리핑",
-                21: "🌙 저녁 미국 프리마켓 & 지표발표 점검 브리핑",
-                23: "🌃 밤 미국 본장 개장 수급 브리핑"
+                8: "☀️ 아침 미국장 마감 & 국내장 대비",
+                21: "🌙 저녁 프리마켓 & 지표발표 점검",
+                23: "🌃 밤 미국 본장 개장 수급 점검"
             }
-            generate_and_send_report(briefing_title=titles[h])
+            generate_and_send_report(mode="BRIEFING", briefing_title=titles[h])
             last_briefing_hour = h
         else:
-            # 평소에는 긴급 조건(3개 이상 극단 공포) 시에만 알림
-            generate_and_send_report(is_emergency=True)
+            generate_and_send_report(mode="EMERGENCY")
 
-        time.sleep(900) # 15분 대기
+        time.sleep(900)
 
 if __name__ == "__main__":
     if os.environ.get("RUN_ONCE") == "true":
