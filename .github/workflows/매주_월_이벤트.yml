@@ -2,26 +2,26 @@ name: Weekly Economic Calendar Bot
 
 on:
   schedule:
-    # UTC 기준 매주 월요일 00:00 (한국시간 월요일 오전 09:00)
     - cron: '0 0 * * 1'
-  workflow_dispatch: # 필요 시 깃허브에서 버튼 눌러 즉시 실행 가능
+  workflow_dispatch:
 
 jobs:
-  build:
+  run-bot:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v3
+      - uses: actions/checkout@v4
 
-      - name: Python 설정
-        uses: actions/setup-python@v4
+      - name: Set up Python
+        uses: actions/setup-python@v5
         with:
           python-version: '3.10'
 
-      - name: 라이브러리 설치
+      - name: Install Dependencies
         run: pip install requests
 
-      - name: 스크립트 실행
+      - name: Run Bot
         env:
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
         run: python 매주_월_고영향지표.py
