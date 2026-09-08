@@ -1,9 +1,7 @@
 """
-미국주식 6대 심리지표 + 4대 증시 지수 + 7대 핵심 거시경제 지표 실시간 자동 감지 봇
-- 6대 심리지표: CNN 공포탐욕지수, Put/Call Ratio, VIX(S&P500), VXN(나스닥), AAII 심리지수, SPY RSI
-- 4대 증시지수: 다우, S&P 500, 나스닥, 코스피
-- 7대 거시경제: WTI유가, 금, 은, 달러/원, 달러/엔, 10년물 국채금리, 비트코인
-- KST/NY 서머타임 자동 계산 & 깃허브 액션/내 PC 통합 지원 (개인+그룹 동시 전송 가능)
+미국증시 3대 정기 브리핑(08시/21시/23시) + 3개 이상 심리지표 극단 공포 시 긴급 알림 봇
+- 정기 브리핑: 08:00 KST (마감), 21:00 KST (프리마켓/지표), 23:00 KST (본장 방향성)
+- 긴급 알림: 6대 심리지표 중 3개 이상 '극단적 공포' 조건 달성 시 🚨 긴급 매수 타점 경보 전송
 """
 
 import os
@@ -28,7 +26,7 @@ KST_TZ = ZoneInfo("Asia/Seoul")
 NY_TZ  = ZoneInfo("America/New_York")
 
 # ------------------------------------------------------------------
-# 2. 시간 및 장 상태 판정 함수
+# 2. 시간 및 장 상태 판정
 # ------------------------------------------------------------------
 def get_market_status_info():
     now_kst = dt.datetime.now(KST_TZ)
@@ -43,41 +41,28 @@ def get_market_status_info():
     ny_minute = now_ny.minute
     ny_time_num = ny_hour * 100 + ny_minute
 
-    # 주말 처리
     if weekday >= 5:
         status_text = "미국 주말 휴장"
-        is_market_open = False
-        session_code = "CLOSED"
     else:
-        # 평일 장 상태 판정 (미국 동부 시간 기준)
         if 400 <= ny_time_num < 930:
             status_text = "미국 프리마켓 진행 중"
-            is_market_open = True
-            session_code = "PRE"
         elif 930 <= ny_time_num < 1600:
             status_text = "미국 정규장(본장) 진행 중"
-            is_market_open = True
-            session_code = "REGULAR"
         elif 1600 <= ny_time_num < 2000:
             status_text = "미국 애프터마켓 진행 중"
-            is_market_open = True
-            session_code = "AFTER"
         else:
             status_text = "미국 장외/휴장 시간"
-            is_market_open = False
-            session_code = "CLOSED"
 
     header_time_str = f"🕒 {kst_str}\n[{status_text} | 현지 {ny_time_str} {tz_name}]"
     return {
+        "kst_hour": now_kst.hour,
+        "kst_minute": now_kst.minute,
         "header_time_str": header_time_str,
-        "is_market_open": is_market_open,
-        "session_code": session_code,
-        "ny_time_num": ny_time_num,
         "weekday": weekday
     }
 
 # ------------------------------------------------------------------
-# 3. 시장 심리지표 수집 함수 (6대 지표)
+# 3. 데이터 수집 함수들
 # ------------------------------------------------------------------
 def get_cnn_fear_greed():
     try:
@@ -89,7 +74,7 @@ def get_cnn_fear_greed():
         putcall_score = data["put_call_options"]["score"]
         return round(fg_score, 1), round(putcall_score, 1)
     except Exception as e:
-        print(f"CNN 지표 수집 실패: {e}")
+        print(f"CNN 수집 실패: {e}")
         return None, None
 
 def get_vix():
@@ -102,7 +87,6 @@ def get_vix():
         return None
 
 def get_vxn():
-    """나스닥 100 변동성 지수 (VXN) 수집"""
     try:
         vxn = yf.Ticker("^VXN")
         hist = vxn.history(period="5d")
@@ -133,45 +117,31 @@ def get_aaii_sentiment():
         json_path = os.path.join(base_path, "aaii_data.json")
         with open(json_path, "r", encoding="utf-8") as f:
             data = json.load(f)
-        bullish = float(data.get("bullish", 0))
-        neutral = float(data.get("neutral", 0))
-        bearish = float(data.get("bearish", 0))
-        return bullish, neutral, bearish
+        return float(data.get("bullish", 0)), float(data.get("neutral", 0)), float(data.get("bearish", 0))
     except Exception as e:
-        print(f"aaii_data.json 읽기 실패: {e}")
+        print(f"AAII 읽기 실패: {e}")
         return None, None, None
 
-# ------------------------------------------------------------------
-# 4. 통합 금융/거시경제 데이터 수집 함수
-# ------------------------------------------------------------------
 def get_market_data(ticker_symbol, is_yield=False):
-    """Yahoo Finance에서 지수/거시경제 데이터를 공통 수집하는 함수"""
     try:
         ticker = yf.Ticker(ticker_symbol)
         hist = ticker.history(period="5d")
-        if hist.empty or len(hist) < 2:
-            return None, None
-
-        raw_curr = hist["Close"].iloc[-1]
-        raw_prev = hist["Close"].iloc[-2]
-
+        if hist.empty or len(hist) < 2: return None, None
+        curr = hist["Close"].iloc[-1]
+        prev = hist["Close"].iloc[-2]
         if is_yield:
-            # 10년물 국채금리 단위 보정 및 %p 변동폭 계산
-            curr = round(raw_curr / 10 if raw_curr > 20 else raw_curr, 2)
-            prev = round(raw_prev / 10 if raw_prev > 20 else raw_prev, 2)
-            chg = round(curr - prev, 2)
+            c = round(curr / 10 if curr > 20 else curr, 2)
+            p = round(prev / 10 if prev > 20 else prev, 2)
+            return c, round(c - p, 2)
         else:
-            curr = round(raw_curr, 2)
-            prev = raw_prev
-            chg = round(((curr - prev) / prev) * 100, 2)
-
-        return curr, chg
+            c = round(curr, 2)
+            return c, round(((c - prev) / prev) * 100, 2)
     except Exception as e:
-        print(f"{ticker_symbol} 데이터 수집 실패: {e}")
+        print(f"{ticker_symbol} 실패: {e}")
         return None, None
 
 # ------------------------------------------------------------------
-# 5. 지표 판정 및 텔레그램 전송 함수
+# 4. 판정 및 긴급 조건 감지 로직
 # ------------------------------------------------------------------
 def judge_fear_greed(score):
     if score is None: return "⚪ 데이터 없음"
@@ -181,90 +151,127 @@ def judge_fear_greed(score):
 
 def judge_putcall(score):
     if score is None: return "⚪ 데이터 없음"
-    if score <= 25: return f"🔴 <b>{score}</b> (콜 쏠림)"
-    if score >= 75: return f"🟢 <b>{score}</b> (풋 쏠림)"
+    if score <= 25: return f"🟢 <b>{score}</b> (풋옵션 쏠림/공포)"
+    if score >= 75: return f"🔴 <b>{score}</b> (콜옵션 쏠림/과열)"
     return f"⚪ <b>{score}</b> (중립)"
 
 def judge_vix(vix):
     if vix is None: return "⚪ 데이터 없음"
-    if vix >= 40: return f"🟢 <b>{vix}</b> (패닉/급등)"
+    if vix >= 25: return f"🟢 <b>{vix}</b> (시장 공포/급등)"
     if vix <= 13: return f"🔴 <b>{vix}</b> (과열 점검)"
     return f"⚪ <b>{vix}</b> (평온~경계)"
 
 def judge_vxn(vxn):
     if vxn is None: return "⚪ 데이터 없음"
-    if vxn >= 35: return f"🟢 <b>{vxn}</b> (기술주 패닉)"
+    if vxn >= 30: return f"🟢 <b>{vxn}</b> (기술주 패닉)"
     if vxn <= 16: return f"🔴 <b>{vxn}</b> (과열 점검)"
     return f"⚪ <b>{vxn}</b> (평온~경계)"
 
 def judge_rsi(rsi):
     if rsi is None: return "⚪ 데이터 없음"
-    if rsi <= 30: return f"🟢 <b>{rsi}</b> (과매도)"
-    if rsi >= 70: return f"🔴 <b>{rsi}</b> (과매수)"
+    if rsi <= 35: return f"🟢 <b>{rsi}</b> (과매도 구간)"
+    if rsi >= 70: return f"🔴 <b>{rsi}</b> (과매수 구간)"
     return f"⚪ <b>{rsi}</b> (중립)"
 
 def judge_aaii(bullish, neutral, bearish):
     if bearish is None or bullish is None: return "⚪ 데이터 없음"
     msg = f"Bull {bullish}% / Bear {bearish}%"
-    if bearish >= 50: return f"🟢 <b>{msg}</b> (Bearish 50%↑ 역발상 매수)"
-    if bullish >= 50: return f"🔴 <b>{msg}</b> (Bullish 50%↑ 과열)"
+    if bearish >= 45: return f"🟢 <b>{msg}</b> (비관론 45%↑ 역발상 매수)"
+    if bullish >= 50: return f"🔴 <b>{msg}</b> (과열)"
     return f"⚪ <b>{msg}</b> (중립)"
 
+def check_extreme_fear_alerts(fg, pc, vix, vxn, rsi, bearish):
+    """6개 심리지표 중 3개 이상 '극단적 공포' 조건 충족 시 알림 트리거"""
+    fear_triggers = []
+
+    if fg is not None and fg <= 25:
+        fear_triggers.append(f"• CNN 공포탐욕지수 극단적 공포 ({fg}pt)")
+    if pc is not None and pc <= 25:
+        fear_triggers.append(f"• Put/Call Ratio 풋옵션 쏠림 ({pc}pt)")
+    if vix is not None and vix >= 25.0:
+        fear_triggers.append(f"• CBOE VIX 급등 ({vix})")
+    if vxn is not None and vxn >= 30.0:
+        fear_triggers.append(f"• CBOE VXN 기술주 패닉 ({vxn})")
+    if rsi is not None and rsi <= 35.0:
+        fear_triggers.append(f"• SPY RSI 과매도 ({rsi})")
+    if bearish is not None and bearish >= 45.0:
+        fear_triggers.append(f"• AAII 개인 비관론 폭증 ({bearish}%)")
+
+    return len(fear_triggers) >= 3, fear_triggers
+
 def format_val(val, chg, unit="", is_bp=False, is_int=False):
-    """수치 표기 포맷팅 공통 함수"""
     if val is None: return "⚪ 데이터 없음"
     icon = "🔺" if chg > 0 else "🔻" if chg < 0 else "➖"
     chg_str = f"+{chg}" if chg > 0 else f"{chg}"
     suffix = "%p" if is_bp else "%"
-    
     formatted_val = f"{int(val):,}" if is_int else f"{val:,.2f}"
     return f"<code>{formatted_val}{unit}</code> ({icon} {chg_str}{suffix})"
 
 def send_telegram(text: str):
-    """개인 및 그룹 채팅방 쉼표(,) 구분 다중 수신 지원"""
     if not TELEGRAM_BOT_TOKEN or not TELEGRAM_CHAT_ID: return
-    
     chat_ids = [cid.strip() for cid in TELEGRAM_CHAT_ID.split(",") if cid.strip()]
     url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
-    
     for chat_id in chat_ids:
-        payload = {"chat_id": chat_id, "text": text, "parse_mode": "HTML"}
         try:
-            requests.post(url, data=payload, timeout=10)
+            requests.post(url, data={"chat_id": chat_id, "text": text, "parse_mode": "HTML"}, timeout=10)
         except Exception as e:
             print(f"텔레그램 전송 실패 ({chat_id}): {e}")
 
-def generate_and_send_report(briefing_title=None):
+# ------------------------------------------------------------------
+# 5. 리포트 생성 및 전송
+# ------------------------------------------------------------------
+def generate_and_send_report(briefing_title=None, is_emergency=False):
     status_info = get_market_status_info()
-    header_time_str = status_info["header_time_str"]
-
-    # 1) 6대 심리지표 수집
+    
+    # 지표 수집
     fg_score, putcall_score = get_cnn_fear_greed()
     vix = get_vix()
     vxn = get_vxn()
     rsi = get_spy_rsi()
     bullish, neutral, bearish = get_aaii_sentiment()
 
-    # 2) 4대 증시 지수 수집
-    dow_p, dow_c       = get_market_data("^DJI")     # 다우 존스
-    sp500_p, sp500_c   = get_market_data("^GSPC")    # S&P 500
-    nasdaq_p, nasdaq_c = get_market_data("^IXIC")    # 나스닥 종합
-    kospi_p, kospi_c   = get_market_data("^KS11")    # 코스피 지수
+    # 긴급 알림 검증
+    is_triggered, triggers = check_extreme_fear_alerts(fg_score, putcall_score, vix, vxn, rsi, bearish)
 
-    # 3) 7대 거시경제 지표 수집
-    wti_p, wti_c     = get_market_data("CL=F")      # WTI 유가
-    gold_p, gold_c   = get_market_data("GC=F")      # 금 선물
-    slv_p, slv_c     = get_market_data("SI=F")      # 은 선물
-    krw_p, krw_c     = get_market_data("KRW=X")     # 달러/원
-    jpy_p, jpy_c     = get_market_data("JPY=X")     # 달러/엔
-    tnx_p, tnx_c     = get_market_data("^TNX", is_yield=True) # 10년물 국채금리
-    btc_p, btc_c     = get_market_data("BTC-USD")   # 비트코인
+    # 정기 실행인데 긴급 알림도 아니고 브리핑 타이밍도 아니면 스킵
+    if is_emergency and not is_triggered:
+        print("긴급 알림 조건 미충족 (극단 공포 3개 미만) -> 전송 스킵")
+        return
 
-    title_header = f"📢 <b>[{briefing_title}]</b>\n" if briefing_title else "📈 <b>미국증시 심리 & 거시경제 실시간 리포트</b>\n"
+    # 증시 및 거시경제 수집
+    dow_p, dow_c       = get_market_data("^DJI")
+    sp500_p, sp500_c   = get_market_data("^GSPC")
+    nasdaq_p, nasdaq_c = get_market_data("^IXIC")
+    kospi_p, kospi_c   = get_market_data("^KS11")
+
+    wti_p, wti_c     = get_market_data("CL=F")
+    gold_p, gold_c   = get_market_data("GC=F")
+    slv_p, slv_c     = get_market_data("SI=F")
+    krw_p, krw_c     = get_market_data("KRW=X")
+    jpy_p, jpy_c     = get_market_data("JPY=X")
+    tnx_p, tnx_c     = get_market_data("^TNX", is_yield=True)
+    btc_p, btc_c     = get_market_data("BTC-USD")
+
+    # 헤더 제목 구성
+    if is_triggered and is_emergency:
+        title_header = f"🚨 <b>[긴급 매수 타점 경보: 공포 지표 {len(triggers)}개 동시 감지!]</b>\n"
+    elif briefing_title:
+        title_header = f"📢 <b>[{briefing_title}]</b>\n"
+    else:
+        title_header = "📈 <b>미국증시 실시간 리포트</b>\n"
 
     lines = [
         title_header,
-        header_time_str,
+        status_info["header_time_str"]
+    ]
+
+    # 긴급 사유 강조 표시
+    if is_triggered:
+        lines.append("━━━━━━━━━━━━━━━━━━━━")
+        lines.append("🔥 <b>[긴급 공포 감지 사유]</b>")
+        lines.extend(triggers)
+
+    lines.extend([
         "━━━━━━━━━━━━━━━━━━━━",
         "🧠 <b>[미국주식 6대 심리지표]</b>",
         f"1. <b>CNN 공포탐욕지수:</b> {judge_fear_greed(fg_score)}",
@@ -289,56 +296,53 @@ def generate_and_send_report(briefing_title=None):
         f"🏛️ <b>미 10년물 국채금리:</b> {format_val(tnx_p, tnx_c, '%', is_bp=True)}",
         f"₿ <b>비트코인 (BTC):</b> {format_val(btc_p, btc_c, '$', is_int=True)}",
         "━━━━━━━━━━━━━━━━━━━━"
-    ]
+    ])
 
-    message = "\n".join(lines)
-    send_telegram(message)
-    print(f"[{dt.datetime.now().strftime('%H:%M:%S')}] 텔레그램 리포트 전송 완료!")
+    send_telegram("\n".join(lines))
+    print(f"[{dt.datetime.now().strftime('%H:%M:%S')}] 리포트 전송 완료!")
 
 # ------------------------------------------------------------------
-# 6. GitHub Actions (1회 실행) 및 내 PC (24시간 실행) 통합 실행부
+# 6. 실행부 (GitHub Actions & 내 PC 분기)
 # ------------------------------------------------------------------
 def run_once():
-    """GitHub Actions 전용: 15분마다 켜져서 브리핑/정기 업데이트 수행 후 종료"""
-    status_info = get_market_status_info()
-    ny_time_num = status_info["ny_time_num"]
-    weekday = status_info["weekday"]
+    """GitHub Actions용: 실행 시점에 따라 정기 브리핑 or 긴급 체크 실행"""
+    status = get_market_status_info()
+    h, m = status["kst_hour"], status["kst_minute"]
 
-    briefing_type = None
-
-    # 평일일 때 4대 주요 장 전환 시점 정기 브리핑 이름 설정
-    if weekday < 5:
-        if 400 <= ny_time_num < 415:
-            briefing_type = "미국 프리마켓 개장 브리핑"
-        elif 930 <= ny_time_num < 945:
-            briefing_type = "미국 정규장(본장) 개장 브리핑"
-        elif 1600 <= ny_time_num < 1615:
-            briefing_type = "미국 정규장 마감 / 애프터마켓 개장 브리핑"
-        elif 2000 <= ny_time_num < 2015:
-            briefing_type = "미국 애프터마켓 마감 브리핑"
-
-    if briefing_type:
-        generate_and_send_report(briefing_title=briefing_type)
+    # 1) 하루 3회 정기 브리핑 시간대 판정 (KST 기준)
+    if h == 8 and m < 20:
+        generate_and_send_report(briefing_title="☀️ 아침 미국장 마감 & 국내장 대비 브리핑")
+    elif h == 21 and m < 20:
+        generate_and_send_report(briefing_title="🌙 저녁 미국 프리마켓 & 지표발표 점검 브리핑")
+    elif h == 23 and m < 20:
+        generate_and_send_report(briefing_title="🌃 밤 미국 본장 개장 수급 브리핑")
     else:
-        # 15분마다 정기 모니터링 리포트 전송
-        generate_and_send_report(briefing_title="15분 실시간 정기 업데이트")
+        # 2) 정기 시간이 아니면 '긴급 조건(3개 이상 극단공포)'일 때만 전송
+        generate_and_send_report(is_emergency=True)
 
 def main_loop():
-    """내 PC에서 직접 24시간 돌릴 때"""
-    print("🚀 심리지표 & 거시경제 알림 봇이 시작되었습니다.")
-    
-    try:
-        generate_and_send_report(briefing_title="🤖 시스템 시작 점검 리포트")
-    except Exception as e:
-        print(f"시작 점검 메시지 전송 실패: {e}")
+    """내 PC용: 24시간 돌며 3회 정기 브리핑 + 15분마다 긴급 모니터링"""
+    print("🚀 하루 3회 브리핑 + 긴급 감지 알림 봇이 시작되었습니다.")
+    last_briefing_hour = -1
 
     while True:
-        try:
-            generate_and_send_report(briefing_title="15분 실시간 정기 업데이트")
-        except Exception as e:
-            print(f"메인 루프 에러 발생: {e}")
+        status = get_market_status_info()
+        h = status["kst_hour"]
 
-        time.sleep(900) # 15분(900초)마다 대기
+        # 정기 브리핑 (08시, 21시, 23시 정각 무렵 1회 발송)
+        if h in [8, 21, 23] and h != last_briefing_hour:
+            titles = {
+                8: "☀️ 아침 미국장 마감 & 국내장 대비 브리핑",
+                21: "🌙 저녁 미국 프리마켓 & 지표발표 점검 브리핑",
+                23: "🌃 밤 미국 본장 개장 수급 브리핑"
+            }
+            generate_and_send_report(briefing_title=titles[h])
+            last_briefing_hour = h
+        else:
+            # 평소에는 긴급 조건(3개 이상 극단 공포) 시에만 알림
+            generate_and_send_report(is_emergency=True)
+
+        time.sleep(900) # 15분 대기
 
 if __name__ == "__main__":
     if os.environ.get("RUN_ONCE") == "true":
