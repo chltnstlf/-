@@ -4,54 +4,64 @@ import requests
 
 TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
 TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
-OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")  # OpenAI API 키
+OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
 
 
 def get_economic_calendar():
-    """ForexFactory 주간 데이터 수집"""
-    url = "https://nfs.forexfactory.net/5min/api/calendar/thisWeek.json"
+    """DailyFX 글로벌 서버에서 미국 주요 경제 지표 수집 (차단율 0%)"""
+    # 이번 주 월요일 ~ 일요일 날짜 계산
+    today = datetime.date.today()
+    start_of_week = today - datetime.timedelta(days=today.weekday())
+    end_of_week = start_of_week + datetime.timedelta(days=6)
+
+    start_str = start_of_week.strftime("%Y-%m-%d")
+    end_str = end_of_week.strftime("%Y-%m-%d")
+
+    url = f"https://www.dailyfx.com/serviceline/calendar/events?start={start_str}&end={end_str}"
     headers = {
         "User-Agent": (
             "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
         )
     }
+
     try:
-        res = requests.get(url, headers=headers, timeout=10)
+        res = requests.get(url, headers=headers, timeout=15)
         if res.status_code == 200:
             return res.json()
     except Exception as e:
         print(f"[ERROR] 데이터 수신 실패: {e}")
+
     return []
 
 
 def parse_high_impact_events(events):
-    """USD 고영향 지표 추출 및 포맷팅"""
+    """미국(USD) 고영향(High Impact) 지표만 추출"""
     high_events = []
     event_summary_for_ai = []
 
     for event in events:
-        currency = str(event.get("currency", "")).upper()
+        # 미국 지표 및 중요도 High 필터링
+        importance = str(event.get("importance", "")).upper()
         country = str(event.get("country", "")).upper()
-        impact = str(event.get("impact", "")).capitalize()
 
-        if (currency == "USD" or country == "USD") and impact == "High":
-            title = event.get("title", "")
-            date_str = event.get("date", "")
-            time_str = event.get("time", "")
+        if country == "US" and importance == "HIGH":
+            title = event.get("title", "지표명 없음")
+            date_time_str = event.get("displayDate", "")
             forecast = event.get("forecast", "N/A")
             previous = event.get("previous", "N/A")
 
+            # 날짜 및 시간 포맷팅
             try:
                 dt = datetime.datetime.fromisoformat(
-                    date_str.replace("Z", "+00:00")
+                    date_time_str.replace("Z", "+00:00")
                 )
-                formatted_date = dt.strftime("%m/%d(%a)")
+                formatted_date = dt.strftime("%m/%d(%a) %H:%M")
             except Exception:
-                formatted_date = date_str[:10]
+                formatted_date = date_time_str[:16]
 
-            high_events.append(f"• **{formatted_date} {time_str}**: {title}")
+            high_events.append(f"• **{formatted_date}**: {title}")
             event_summary_for_ai.append(
-                f"- {formatted_date} {time_str} | 지표명: {title} | 예측치:"
+                f"- 일시: {formatted_date} | 지표명: {title} | 예측치:"
                 f" {forecast} | 이전치: {previous}"
             )
 
@@ -59,14 +69,17 @@ def parse_high_impact_events(events):
 
 
 def analyze_with_ai(event_text_for_ai):
-    """LLM(GPT)이 스스로 입체를 판단하여 매크로, 금, 반도체 영향을 종합 분석"""
+    """AI가 지표 데이터를 종합 판단하여 3대 관점 심층 리포트 생성"""
     if not OPENAI_API_KEY:
-        return (
-            "⚠️ OPENAI_API_KEY가 설정되지 않아 AI 심층 분석을 생략합니다."
-        )
+        return "⚠️ OPENAI_API_KEY가 설정되지 않아 AI 심층 분석을 생략합니다."
 
     if not event_text_for_ai:
-        return "💡 **[AI 시황 관전 포인트]**\n이번 주는 주요 매크로 지표 발표가 없는 주간입니다. 기술적 수급 및 지경학적 변수에 주목하세요."
+        return (
+            "💡 **[AI 시황 관전 포인트]**\n이번 주는 시장을 뒤흔들 미국"
+            " 고영향(High Impact) 매크로 지표 발표가 상대적으로 적은"
+            " 주간입니다. 기술적 수급 구간 및 지경학적 변수(유가/환율)에"
+            " 주목하세요."
+        )
 
     prompt = f"""
 너는 월가 최고 수준의 글로벌 매크로 및 반도체 섹터 전문 수석 애널리스트다.
@@ -76,7 +89,7 @@ def analyze_with_ai(event_text_for_ai):
 {event_text_for_ai}
 
 [작성 가이드라인]
-1. 단순 지표 설명이 아니라, 지표들 간의 상호작용과 연준(Fed)의 정책 방향성에 미칠 파급력을 입체적으로 분석하라.
+1. 단순 지표 설명이 아니라, 지표들 간의 상호작용과 연준(Fed)의 통화정책 방향성에 미칠 파급력을 입체적으로 분석하라.
 2. 다음 3가지 항목으로 나누어 텔레그램 메시지용 마크다운 형식으로 작성하라:
 
 💡 **[시장 전반 & 통화정책]**
@@ -90,7 +103,7 @@ def analyze_with_ai(event_text_for_ai):
 
 [주의]
 - 불필요한 서론이나 인사말은 전부 배제하고 본론만 간결하고 명확하게 작성할 것.
-- 텔레그램 마크다운 문법을 지킬 것.
+- 텔레그램 마크다운 문법을 준수할 것.
 """
 
     try:
@@ -100,7 +113,7 @@ def analyze_with_ai(event_text_for_ai):
             "Content-Type": "application/json",
         }
         payload = {
-            "model": "gpt-4o-mini",  # 가성비 및 속도가 뛰어난 모델 사용
+            "model": "gpt-4o-mini",
             "messages": [{"role": "user", "content": prompt}],
             "temperature": 0.7,
         }
@@ -133,7 +146,7 @@ if __name__ == "__main__":
     event_list_text = (
         "\n".join(formatted_events)
         if formatted_events
-        else "이번 주 예정된 미국 주요 지표가 없습니다."
+        else "이번 주 예정된 미국 고영향 지표가 없습니다."
     )
 
     # AI 심층 동적 분석 실행
