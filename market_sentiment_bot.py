@@ -1,6 +1,6 @@
 """
-미국주식 5대 심리지표 + 4대 증시 지수 + 7대 핵심 거시경제 지표 실시간 자동 감지 봇
-- 5대 심리지표: CNN 공포탐욕지수, Put/Call Ratio, VIX, AAII 심리지수, SPY RSI
+미국주식 6대 심리지표 + 4대 증시 지수 + 7대 핵심 거시경제 지표 실시간 자동 감지 봇
+- 6대 심리지표: CNN 공포탐욕지수, Put/Call Ratio, VIX(S&P500), VXN(나스닥), AAII 심리지수, SPY RSI
 - 4대 증시지수: 다우, S&P 500, 나스닥, 코스피
 - 7대 거시경제: WTI유가, 금, 은, 달러/원, 달러/엔, 10년물 국채금리, 비트코인
 - KST/NY 서머타임 자동 계산 & 깃허브 액션/내 PC 통합 지원 (개인+그룹 동시 전송 가능)
@@ -77,7 +77,7 @@ def get_market_status_info():
     }
 
 # ------------------------------------------------------------------
-# 3. 시장 심리지표 수집 함수 (5대 지표)
+# 3. 시장 심리지표 수집 함수 (6대 지표)
 # ------------------------------------------------------------------
 def get_cnn_fear_greed():
     try:
@@ -99,6 +99,16 @@ def get_vix():
         return round(hist["Close"].iloc[-1], 2)
     except Exception as e:
         print(f"VIX 수집 실패: {e}")
+        return None
+
+def get_vxn():
+    """나스닥 100 변동성 지수 (VXN) 수집"""
+    try:
+        vxn = yf.Ticker("^VXN")
+        hist = vxn.history(period="5d")
+        return round(hist["Close"].iloc[-1], 2)
+    except Exception as e:
+        print(f"VXN 수집 실패: {e}")
         return None
 
 def get_spy_rsi(period=14):
@@ -181,6 +191,12 @@ def judge_vix(vix):
     if vix <= 13: return f"🔴 <b>{vix}</b> (과열 점검)"
     return f"⚪ <b>{vix}</b> (평온~경계)"
 
+def judge_vxn(vxn):
+    if vxn is None: return "⚪ 데이터 없음"
+    if vxn >= 35: return f"🟢 <b>{vxn}</b> (기술주 패닉)"
+    if vxn <= 16: return f"🔴 <b>{vxn}</b> (과열 점검)"
+    return f"⚪ <b>{vxn}</b> (평온~경계)"
+
 def judge_rsi(rsi):
     if rsi is None: return "⚪ 데이터 없음"
     if rsi <= 30: return f"🟢 <b>{rsi}</b> (과매도)"
@@ -222,9 +238,10 @@ def generate_and_send_report(briefing_title=None):
     status_info = get_market_status_info()
     header_time_str = status_info["header_time_str"]
 
-    # 1) 5대 심리지표 수집
+    # 1) 6대 심리지표 수집
     fg_score, putcall_score = get_cnn_fear_greed()
     vix = get_vix()
+    vxn = get_vxn()
     rsi = get_spy_rsi()
     bullish, neutral, bearish = get_aaii_sentiment()
 
@@ -249,12 +266,13 @@ def generate_and_send_report(briefing_title=None):
         title_header,
         header_time_str,
         "━━━━━━━━━━━━━━━━━━━━",
-        "🧠 <b>[미국주식 5대 심리지표]</b>",
+        "🧠 <b>[미국주식 6대 심리지표]</b>",
         f"1. <b>CNN 공포탐욕지수:</b> {judge_fear_greed(fg_score)}",
         f"2. <b>Put/Call Ratio:</b> {judge_putcall(putcall_score)}",
-        f"3. <b>CBOE VIX Index:</b> {judge_vix(vix)}",
-        f"4. <b>AAII 심리지수:</b> {judge_aaii(bullish, neutral, bearish)}",
-        f"5. <b>S&P500 RSI:</b> {judge_rsi(rsi)}",
+        f"3. <b>CBOE VIX (S&P500):</b> {judge_vix(vix)}",
+        f"4. <b>CBOE VXN (나스닥):</b> {judge_vxn(vxn)}",
+        f"5. <b>AAII 심리지수:</b> {judge_aaii(bullish, neutral, bearish)}",
+        f"6. <b>S&P500 RSI:</b> {judge_rsi(rsi)}",
         "━━━━━━━━━━━━━━━━━━━━",
         "📊 <b>[주요 증시 지수]</b>",
         f"🇺🇸 <b>다우 존스:</b> {format_val(dow_p, dow_c, 'pt')}",
@@ -264,7 +282,7 @@ def generate_and_send_report(briefing_title=None):
         "━━━━━━━━━━━━━━━━━━━━",
         "🌐 <b>[핵심 거시경제 지표]</b>",
         f"🛢️ <b>WTI 유가:</b> {format_val(wti_p, wti_c, '$')}",
-        f"🥇 <b>금 (Gold):</b> {format_val(gold_p, gold_c, '$')}",
+        f"🪙 <b>금 (Gold):</b> {format_val(gold_p, gold_c, '$')}",
         f"🥈 <b>은 (Silver):</b> {format_val(slv_p, slv_c, '$')}",
         f"💵 <b>달러/원 (USD/KRW):</b> {format_val(krw_p, krw_c, '원')}",
         f"💴 <b>달러/엔 (USD/JPY):</b> {format_val(jpy_p, jpy_c, '엔')}",
