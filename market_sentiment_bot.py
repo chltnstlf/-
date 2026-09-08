@@ -264,7 +264,7 @@ def generate_and_send_report(briefing_title=None):
         "━━━━━━━━━━━━━━━━━━━━",
         "🌐 <b>[핵심 거시경제 지표]</b>",
         f"🛢️ <b>WTI 유가:</b> {format_val(wti_p, wti_c, '$')}",
-        f"🪙 <b>금 (Gold):</b> {format_val(gold_p, gold_c, '$')}",
+        f"🥇 <b>금 (Gold):</b> {format_val(gold_p, gold_c, '$')}",
         f"🥈 <b>은 (Silver):</b> {format_val(slv_p, slv_c, '$')}",
         f"💵 <b>달러/원 (USD/KRW):</b> {format_val(krw_p, krw_c, '원')}",
         f"💴 <b>달러/엔 (USD/JPY):</b> {format_val(jpy_p, jpy_c, '엔')}",
