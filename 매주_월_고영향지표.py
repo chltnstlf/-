@@ -1,131 +1,68 @@
 import datetime
 import os
 import requests
+from google import genai
+from google.genai import types
 
 TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
 TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
-OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
+GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 
 
-def get_economic_calendar():
-    """DailyFX 글로벌 서버에서 미국 주요 경제 지표 수집 (차단율 0%)"""
-    # 이번 주 월요일 ~ 일요일 날짜 계산
-    today = datetime.date.today()
-    start_of_week = today - datetime.timedelta(days=today.weekday())
-    end_of_week = start_of_week + datetime.timedelta(days=6)
+def generate_report_with_gemini():
+    """Gemini AI가 실시간 구글 검색으로 이번 주/다음 주 지표를 수집 및 분석"""
+    if not GEMINI_API_KEY:
+        return "⚠️ GEMINI_API_KEY가 설정되지 않았습니다."
 
-    start_str = start_of_week.strftime("%Y-%m-%d")
-    end_str = end_of_week.strftime("%Y-%m-%d")
-
-    url = f"https://www.dailyfx.com/serviceline/calendar/events?start={start_str}&end={end_str}"
-    headers = {
-        "User-Agent": (
-            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
-        )
-    }
-
-    try:
-        res = requests.get(url, headers=headers, timeout=15)
-        if res.status_code == 200:
-            return res.json()
-    except Exception as e:
-        print(f"[ERROR] 데이터 수신 실패: {e}")
-
-    return []
-
-
-def parse_high_impact_events(events):
-    """미국(USD) 고영향(High Impact) 지표만 추출"""
-    high_events = []
-    event_summary_for_ai = []
-
-    for event in events:
-        # 미국 지표 및 중요도 High 필터링
-        importance = str(event.get("importance", "")).upper()
-        country = str(event.get("country", "")).upper()
-
-        if country == "US" and importance == "HIGH":
-            title = event.get("title", "지표명 없음")
-            date_time_str = event.get("displayDate", "")
-            forecast = event.get("forecast", "N/A")
-            previous = event.get("previous", "N/A")
-
-            # 날짜 및 시간 포맷팅
-            try:
-                dt = datetime.datetime.fromisoformat(
-                    date_time_str.replace("Z", "+00:00")
-                )
-                formatted_date = dt.strftime("%m/%d(%a) %H:%M")
-            except Exception:
-                formatted_date = date_time_str[:16]
-
-            high_events.append(f"• **{formatted_date}**: {title}")
-            event_summary_for_ai.append(
-                f"- 일시: {formatted_date} | 지표명: {title} | 예측치:"
-                f" {forecast} | 이전치: {previous}"
-            )
-
-    return high_events, "\n".join(event_summary_for_ai)
-
-
-def analyze_with_ai(event_text_for_ai):
-    """AI가 지표 데이터를 종합 판단하여 3대 관점 심층 리포트 생성"""
-    if not OPENAI_API_KEY:
-        return "⚠️ OPENAI_API_KEY가 설정되지 않아 AI 심층 분석을 생략합니다."
-
-    if not event_text_for_ai:
-        return (
-            "💡 **[AI 시황 관전 포인트]**\n이번 주는 시장을 뒤흔들 미국"
-            " 고영향(High Impact) 매크로 지표 발표가 상대적으로 적은"
-            " 주간입니다. 기술적 수급 구간 및 지경학적 변수(유가/환율)에"
-            " 주목하세요."
-        )
+    client = genai.Client(api_key=GEMINI_API_KEY)
+    today = datetime.date.today().strftime("%Y년 %m월 %d일")
 
     prompt = f"""
-너는 월가 최고 수준의 글로벌 매크로 및 반도체 섹터 전문 수석 애널리스트다.
-아래 제공된 [이번 주 미국 주요 경제 지표 발표 일정]을 바탕으로, 시장을 다각도로 종합 분석하여 리포트를 작성해라.
+오늘 날짜({today}) 기준으로 실시간 구글 검색을 수행하여, 미국 경제 지표 발표 일정을 수집하고 심층 시장 분석 리포트를 작성하라.
 
-[이번 주 주요 지표 일정]
-{event_text_for_ai}
+[수집 및 분석 가이드라인]
+1. 구글 검색을 통해 오늘 기준 '이번 주'와 '다음 주' 발표되는 미국의 핵심 경제 지표(CPI, PPI, PCE, FOMC, 비농업 고용, GDP, ISM 등)의 날짜/시간(한국시간 기준)과 지표명을 찾아라.
+2. 각 지표의 시장 영향력에 따라 중요도 별표(⭐⭐⭐: 최상, ⭐⭐: 상, ⭐: 중)를 붙여 정리하라.
+3. 수집된 일정을 바탕으로 지표 간의 연쇄 파급력을 계산하여 아래 3가지 카테고리로 나누어 입체적으로 분석하라:
+   - 💡 **[시장 전반 & 통화정책]**: 국채금리, 달러 인덱스, 연준 금리 경로 관점
+   - 🟡 **[금 & 금 채굴주(GDXU) 관점]**: 실질금리, 유동성, 3배 레버리지 변동성 대응 타점
+   - 💻 **[반도체 & 빅테크(SOXX/NVDA) 관점]**: 금리/할인율, AI CapEx, 전방 IT 수요 파급력
 
-[작성 가이드라인]
-1. 단순 지표 설명이 아니라, 지표들 간의 상호작용과 연준(Fed)의 통화정책 방향성에 미칠 파급력을 입체적으로 분석하라.
-2. 다음 3가지 항목으로 나누어 텔레그램 메시지용 마크다운 형식으로 작성하라:
+[출력 포맷]
+📊 **[주간 미국 핵심 경제 일정 & Gemini AI 브리핑]**
+📅 기준일: {today}
+
+🔥 **이번 주 주요 지표 (Critical Events)**
+• [날짜 시각] 지표명 (중요도)
+
+🚀 **다음 주 주요 지표 (Upcoming Events)**
+• [날짜 시각] 지표명 (중요도)
 
 💡 **[시장 전반 & 통화정책]**
-- 국채금리, 달러 인덱스, 연준 금리 경로 관점의 종합적 분석
+- 내용...
 
 🟡 **[금 & 금 채굴주(GDXU) 관점]**
-- 실질금리, 유동성, 지표 수치에 따른 금 가격 및 3배 레버리지 채굴주(GDXU) 변동성 포인트
+- 내용...
 
 💻 **[반도체 & 빅테크(SOXX/NVDA) 관점]**
-- 금리/물가/제조업 지표가 반도체 밸류에이션(할인율), AI 자본지출(CapEx), 전방 IT 수요에 미치는 다이렉트 영향
+- 내용...
 
-[주의]
-- 불필요한 서론이나 인사말은 전부 배제하고 본론만 간결하고 명확하게 작성할 것.
-- 텔레그램 마크다운 문법을 준수할 것.
+[주의사항]
+- 불필요한 서론, 결론, 인사말은 배제하고 위 마크다운 포맷 그대로 출력할 것.
 """
 
     try:
-        url = "https://api.openai.com/v1/chat/completions"
-        headers = {
-            "Authorization": f"Bearer {OPENAI_API_KEY}",
-            "Content-Type": "application/json",
-        }
-        payload = {
-            "model": "gpt-4o-mini",
-            "messages": [{"role": "user", "content": prompt}],
-            "temperature": 0.7,
-        }
-
-        res = requests.post(url, headers=headers, json=payload, timeout=30)
-        if res.status_code == 200:
-            result = res.json()
-            return result["choices"][0]["message"]["content"]
-        else:
-            return f"⚠️ AI 분석 생성 실패 (HTTP {res.status_code})"
+        # 실시간 구글 검색(Google Search Grounding) 도구 활성화
+        response = client.models.generate_content(
+            model="gemini-2.5-flash",
+            contents=prompt,
+            config=types.GenerateContentConfig(
+                tools=[types.Tool(google_search=types.GoogleSearch())]
+            ),
+        )
+        return response.text
     except Exception as e:
-        return f"⚠️ AI 분석 호출 중 오류 발생: {e}"
+        return f"⚠️ Gemini AI 호출 및 검색 실패: {e}"
 
 
 def send_telegram_message(token, chat_id, text):
@@ -137,27 +74,5 @@ def send_telegram_message(token, chat_id, text):
 
 
 if __name__ == "__main__":
-    raw_calendar = get_economic_calendar()
-    formatted_events, event_text_for_ai = parse_high_impact_events(
-        raw_calendar
-    )
-
-    today = datetime.date.today().strftime("%Y년 %m월 %d일")
-    event_list_text = (
-        "\n".join(formatted_events)
-        if formatted_events
-        else "이번 주 예정된 미국 고영향 지표가 없습니다."
-    )
-
-    # AI 심층 동적 분석 실행
-    ai_analysis = analyze_with_ai(event_text_for_ai)
-
-    message = (
-        f"📊 **[주간 미국 핵심 경제 일정 & AI 심층 브리핑]**\n"
-        f"📅 기준일: {today}\n\n"
-        f"🔥 **이번 주 주요 지표 (High Impact)**\n"
-        f"{event_list_text}\n\n"
-        f"{ai_analysis}"
-    )
-
-    send_telegram_message(TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID, message)
+    report = generate_report_with_gemini()
+    send_telegram_message(TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID, report)
