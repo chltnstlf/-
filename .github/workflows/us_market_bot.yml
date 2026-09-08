@@ -1,33 +1,42 @@
-name: US Market Sentiment Bot
+name: Market Intelligence Telegram Bot
 
 on:
   schedule:
-    # UTC 기준 08:00 ~ 01:00 (한국시간 17:00 ~ 다음날 10:00, 미국 프리/본장/애프터 시간 전체 커버)
-    # 15분 간격 자동 실행
-    - cron: '*/15 8-23 * * 1-5'
-    - cron: '*/15 0-1 * * 2-6'
-  workflow_dispatch: # Actions 탭에서 수동 실행 버튼 활성화
+    # 1. KST 06:25 (미국 장 마감 브리핑) ➔ UTC 전날 21:25
+    - cron: '25 21 * * *'
+
+    # 2. KST 08:00 (국장 개장 전 준비) ➔ UTC 전날 23:02 (정시 지연 방지 2분 오프셋)
+    - cron: '2 23 * * *'
+
+    # 3. KST 15:30 (국장 마감 점검) ➔ UTC 당일 06:30
+    - cron: '30 6 * * *'
+
+    # 4. KST 21:00 (미국 프리마켓 시작) ➔ UTC 당일 12:02
+    - cron: '2 12 * * *'
+
+    # 5. KST 23:00 (미국 본장 개장 전) ➔ UTC 당일 14:02
+    - cron: '2 14 * * *'
+
+  workflow_dispatch: # 수동 실행 버튼 (테스트용)
 
 jobs:
-  run-us-bot:
+  run-bot:
     runs-on: ubuntu-latest
     steps:
-      - name: 코드 가져오기
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
 
-      - name: 파이썬 환경 설정
+      - name: Set up Python
         uses: actions/setup-python@v5
         with:
           python-version: '3.10'
 
-      - name: 라이브러리 설치
-        run: |
-          python -m pip install --upgrade pip
-          pip install requests yfinance
+      - name: Install Dependencies
+        run: pip install google-genai requests
 
-      - name: 미국주식 감시 봇 1회 실행
+      - name: Run Bot
         env:
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
-          RUN_ONCE: "true"
-        run: python market_sentiment_bot.py
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+        # 실행할 파이썬 파일명 (저장소 파일명과 동일해야 함)
+        run: python 매주_월_고영향지표.py
