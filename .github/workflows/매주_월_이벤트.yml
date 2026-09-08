@@ -2,7 +2,9 @@ name: Weekly Economic Calendar Bot
 
 on:
   schedule:
-    - cron: '10 12,14,23 * * *'
+    # 매주 월요일 KST 08:02 실행 (UTC 기준 일요일 23:02)
+    # 정시 대기 지연을 방지하기 위해 2분 오프셋(2분) 적용
+    - cron: '2 23 * * 0'
   workflow_dispatch:
 
 jobs:
