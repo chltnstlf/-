@@ -1,8 +1,8 @@
 """
-미국증시 3대 정기 브리핑 + 긴급 알림 + 수동 조회 통합 봇
-- 정기 브리핑: 08:00 KST (마감), 21:00 KST (프리마켓), 23:00 KST (본장)
-- 긴급 알림: 6대 심리지표 중 3개 이상 '극단적 공포' 조건 충족 시에만 전송
-- 수동 조회: 버튼 클릭/수동 실행 시 조건 상관없이 즉시 실시간 리포트 전송
+미국/한국 증시 5대 정기 브리핑 + 긴급 알림 + 수동 조회 통합 봇 (yfinance & CNN 수집)
+- 정기 브리핑: 06:25(새벽마감), 08:00(국장개장전), 15:30(국장마감), 21:00(프리마켓), 23:00(본장)
+- 긴급 알림: 6대 심리지표 중 3개 이상 '극단적 공포' 조건 충족 시 전송
+- 수동 조회: workflow_dispatch 실행 시 조건 상관없이 즉시 실시간 리포트 전송
 """
 
 import os
@@ -182,9 +182,7 @@ def judge_aaii(bullish, neutral, bearish):
     return f"⚪ <b>{msg}</b> (중립)"
 
 def check_extreme_fear_alerts(fg, pc, vix, vxn, rsi, bearish):
-    """6개 심리지표 중 3개 이상 '극단적 공포' 조건 충족 여부 확인"""
     fear_triggers = []
-
     if fg is not None and fg <= 25:
         fear_triggers.append(f"• CNN 공포탐욕지수 극단적 공포 ({fg}pt)")
     if pc is not None and pc <= 25:
@@ -222,30 +220,20 @@ def send_telegram(text: str):
 # 5. 리포트 생성 및 구분 발송 함수
 # ------------------------------------------------------------------
 def generate_and_send_report(mode="MANUAL", briefing_title=None):
-    """
-    mode 옵션:
-    - "BRIEFING": 정기 브리핑 (무조건 발송)
-    - "EMERGENCY": 긴급 알림 모니터링 (3개 이상 공포 시에만 발송)
-    - "MANUAL": 수동 요청/테스트 실행 (무조건 발송)
-    """
     status_info = get_market_status_info()
     
-    # 지표 수집
     fg_score, putcall_score = get_cnn_fear_greed()
     vix = get_vix()
     vxn = get_vxn()
     rsi = get_spy_rsi()
     bullish, neutral, bearish = get_aaii_sentiment()
 
-    # 긴급 알림 조건 검증
     is_triggered, triggers = check_extreme_fear_alerts(fg_score, putcall_score, vix, vxn, rsi, bearish)
 
-    # 모니터링 모드인데 긴급 알림 조건 미충족 시 전송 안 함
     if mode == "EMERGENCY" and not is_triggered:
         print("긴급 알림 조건 미충족 (극단 공포 3개 미만) -> 전송 스킵")
         return
 
-    # 증시 및 거시경제 수집
     dow_p, dow_c       = get_market_data("^DJI")
     sp500_p, sp500_c   = get_market_data("^GSPC")
     nasdaq_p, nasdaq_c = get_market_data("^IXIC")
@@ -259,12 +247,11 @@ def generate_and_send_report(mode="MANUAL", briefing_title=None):
     tnx_p, tnx_c     = get_market_data("^TNX", is_yield=True)
     btc_p, btc_c     = get_market_data("BTC-USD")
 
-    # [구분 1] 헤더 타이틀 명확히 분기
     if mode == "EMERGENCY":
         title_header = f"🚨 <b>[긴급 알림 | 매수 타점 경보 (공포 지표 {len(triggers)}개 감지)]</b>\n"
     elif mode == "BRIEFING":
         title_header = f"📢 <b>[정기 브리핑 | {briefing_title}]</b>\n"
-    else: # MANUAL
+    else:
         title_header = "🔍 <b>[수동 요청 | 실시간 증시 점검 리포트]</b>\n"
 
     lines = [
@@ -272,7 +259,6 @@ def generate_and_send_report(mode="MANUAL", briefing_title=None):
         status_info["header_time_str"]
     ]
 
-    # 긴급 공포 조건 감지 시 사유 표시 (수동 요청 시에도 감지되었으면 알려줌)
     if is_triggered:
         lines.append("━━━━━━━━━━━━━━━━━━━━")
         lines.append("🔥 <b>[긴급 공포 감지 사유]</b>")
@@ -309,34 +295,35 @@ def generate_and_send_report(mode="MANUAL", briefing_title=None):
     print(f"[{dt.datetime.now().strftime('%H:%M:%S')}] [{mode}] 리포트 전송 완료!")
 
 # ------------------------------------------------------------------
-# 6. 실행부 (GitHub Actions & 수동 실행 완벽 분기)
+# 6. 실행부 (5개 정기 시간대 반영)
 # ------------------------------------------------------------------
 def run_once():
     """GitHub Actions 및 단발성 실행 전용"""
     status = get_market_status_info()
     h, m = status["kst_hour"], status["kst_minute"]
 
-    # 수동 실행 변수 체크 (깃허브 수동버튼 누름 or 컴퓨터 환경변수로 지정)
     is_manual = (
         os.environ.get("MANUAL_RUN") == "true" or 
         os.environ.get("GITHUB_EVENT_NAME") == "workflow_dispatch"
     )
 
     if is_manual:
-        # 수동 트리거일 경우 시간 무관하게 즉시 발송
         generate_and_send_report(mode="MANUAL")
-    elif h == 8 and m < 20:
+    elif h == 6:
+        generate_and_send_report(mode="BRIEFING", briefing_title="🌅 새벽 미국장 마감 최종 브리핑")
+    elif h == 8:
         generate_and_send_report(mode="BRIEFING", briefing_title="☀️ 아침 미국장 마감 & 국내장 대비")
-    elif h == 21 and m < 20:
+    elif h == 15:
+        generate_and_send_report(mode="BRIEFING", briefing_title="📊 오후 국내장 마감 총평")
+    elif h == 21:
         generate_and_send_report(mode="BRIEFING", briefing_title="🌙 저녁 프리마켓 & 지표발표 점검")
-    elif h == 23 and m < 20:
+    elif h == 23:
         generate_and_send_report(mode="BRIEFING", briefing_title="🌃 밤 미국 본장 개장 수급 점검")
     else:
-        # 자동 크론 정기 체크 시에는 긴급 조건일 때만 발송
         generate_and_send_report(mode="EMERGENCY")
 
 def main_loop():
-    """내 PC에서 24시간 돌릴 때"""
+    """PC/서버 연속 실행 전용"""
     print("🚀 봇이 시작되었습니다. (시작 즉시 점검 리포트 전송)")
     generate_and_send_report(mode="MANUAL")
 
@@ -346,12 +333,15 @@ def main_loop():
         status = get_market_status_info()
         h = status["kst_hour"]
 
-        if h in [8, 21, 23] and h != last_briefing_hour:
-            titles = {
-                8: "☀️ 아침 미국장 마감 & 국내장 대비",
-                21: "🌙 저녁 프리마켓 & 지표발표 점검",
-                23: "🌃 밤 미국 본장 개장 수급 점검"
-            }
+        titles = {
+            6: "🌅 새벽 미국장 마감 최종 브리핑",
+            8: "☀️ 아침 미국장 마감 & 국내장 대비",
+            15: "📊 오후 국내장 마감 총평",
+            21: "🌙 저녁 프리마켓 & 지표발표 점검",
+            23: "🌃 밤 미국 본장 개장 수급 점검"
+        }
+
+        if h in titles and h != last_briefing_hour:
             generate_and_send_report(mode="BRIEFING", briefing_title=titles[h])
             last_briefing_hour = h
         else:
