@@ -10,7 +10,7 @@ GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 
 
 def generate_report_with_gemini():
-    """Gemini 2.0 AI가 실시간 구글 검색으로 이번 주/다음 주 지표를 수집 및 분석"""
+    """Gemini AI가 실시간 구글 검색으로 이번 주/다음 주 지표를 수집 및 분석"""
     if not GEMINI_API_KEY:
         return "⚠️ GEMINI_API_KEY가 설정되지 않았습니다."
 
@@ -52,9 +52,9 @@ def generate_report_with_gemini():
 """
 
     try:
-        # gemini-2.0-flash 모델 적용 (Google Search Grounding 지원)
+        # gemini-3.6-flash 모델 적용
         response = client.models.generate_content(
-            model="gemini-2.0-flash",
+            model="gemini-3.6-flash",
             contents=prompt,
             config=types.GenerateContentConfig(
                 tools=[types.Tool(google_search=types.GoogleSearch())]
