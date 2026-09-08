@@ -1,9 +1,9 @@
 """
-미국주식 5대 심리지표 + 주요 거시경제 지표(유가/환율/금리) 실시간 자동 감지 봇
-- KST(한국시간) & NY(미국 뉴욕시간) 서머타임 자동 계산 및 장 상태 표기
+미국주식 5대 심리지표 + 4대 증시 지수 + 7대 핵심 거시경제 지표 실시간 자동 감지 봇
 - 5대 심리지표: CNN 공포탐욕지수, Put/Call Ratio, VIX, AAII 심리지수, SPY RSI
-- 주요 거시경제: 브렌트유가, 엔/달러 환율, 미국 10년물 국채금리
-- 깃허브 액션(15분 주기) & 개인/그룹 동시 전송 완벽 지원
+- 4대 증시지수: 다우, S&P 500, 나스닥, 코스피
+- 7대 거시경제: WTI유가, 금, 은, 달러/원, 달러/엔, 10년물 국채금리, 비트코인
+- KST/NY 서머타임 자동 계산 & 깃허브 액션/내 PC 통합 지원 (개인+그룹 동시 전송 가능)
 """
 
 import os
@@ -132,50 +132,32 @@ def get_aaii_sentiment():
         return None, None, None
 
 # ------------------------------------------------------------------
-# 4. 거시경제 지표 수집 함수 (유가 / 환율 / 금리)
+# 4. 통합 금융/거시경제 데이터 수집 함수
 # ------------------------------------------------------------------
-def get_brent_crude():
-    """브렌트유 선물 (BZ=F) 수집"""
+def get_market_data(ticker_symbol, is_yield=False):
+    """Yahoo Finance에서 지수/거시경제 데이터를 공통 수집하는 함수"""
     try:
-        ticker = yf.Ticker("BZ=F")
+        ticker = yf.Ticker(ticker_symbol)
         hist = ticker.history(period="5d")
-        if hist.empty: return None, None
-        curr = round(hist["Close"].iloc[-1], 2)
-        prev = hist["Close"].iloc[-2]
-        chg = round(((curr - prev) / prev) * 100, 2)
+        if hist.empty or len(hist) < 2:
+            return None, None
+
+        raw_curr = hist["Close"].iloc[-1]
+        raw_prev = hist["Close"].iloc[-2]
+
+        if is_yield:
+            # 10년물 국채금리 단위 보정 및 %p 변동폭 계산
+            curr = round(raw_curr / 10 if raw_curr > 20 else raw_curr, 2)
+            prev = round(raw_prev / 10 if raw_prev > 20 else raw_prev, 2)
+            chg = round(curr - prev, 2)
+        else:
+            curr = round(raw_curr, 2)
+            prev = raw_prev
+            chg = round(((curr - prev) / prev) * 100, 2)
+
         return curr, chg
     except Exception as e:
-        print(f"브렌트유 수집 실패: {e}")
-        return None, None
-
-def get_usdjpy():
-    """엔/달러 환율 (JPY=X) 수집"""
-    try:
-        ticker = yf.Ticker("JPY=X")
-        hist = ticker.history(period="5d")
-        if hist.empty: return None, None
-        curr = round(hist["Close"].iloc[-1], 2)
-        prev = hist["Close"].iloc[-2]
-        chg = round(((curr - prev) / prev) * 100, 2)
-        return curr, chg
-    except Exception as e:
-        print(f"엔/달러 수집 실패: {e}")
-        return None, None
-
-def get_us10y():
-    """미국 10년물 국채금리 (^TNX) 수집"""
-    try:
-        ticker = yf.Ticker("^TNX")
-        hist = ticker.history(period="5d")
-        if hist.empty: return None, None
-        raw_val = hist["Close"].iloc[-1]
-        curr = round(raw_val / 10 if raw_val > 20 else raw_val, 2) # TNX 지수는 10배 표기되는 경우 보정
-        prev_raw = hist["Close"].iloc[-2]
-        prev = round(prev_raw / 10 if prev_raw > 20 else prev_raw, 2)
-        chg_diff = round(curr - prev, 2) # 금리는 %p 차이로 표기
-        return curr, chg_diff
-    except Exception as e:
-        print(f"10년물 국채금리 수집 실패: {e}")
+        print(f"{ticker_symbol} 데이터 수집 실패: {e}")
         return None, None
 
 # ------------------------------------------------------------------
@@ -212,12 +194,15 @@ def judge_aaii(bullish, neutral, bearish):
     if bullish >= 50: return f"🔴 <b>{msg}</b> (Bullish 50%↑ 과열)"
     return f"⚪ <b>{msg}</b> (중립)"
 
-def format_macro_val(val, chg, unit="", is_bp=False):
+def format_val(val, chg, unit="", is_bp=False, is_int=False):
+    """수치 표기 포맷팅 공통 함수"""
     if val is None: return "⚪ 데이터 없음"
     icon = "🔺" if chg > 0 else "🔻" if chg < 0 else "➖"
     chg_str = f"+{chg}" if chg > 0 else f"{chg}"
     suffix = "%p" if is_bp else "%"
-    return f"<code>{val}{unit}</code> ({icon} {chg_str}{suffix})"
+    
+    formatted_val = f"{int(val):,}" if is_int else f"{val:,.2f}"
+    return f"<code>{formatted_val}{unit}</code> ({icon} {chg_str}{suffix})"
 
 def send_telegram(text: str):
     """개인 및 그룹 채팅방 쉼표(,) 구분 다중 수신 지원"""
@@ -243,10 +228,20 @@ def generate_and_send_report(briefing_title=None):
     rsi = get_spy_rsi()
     bullish, neutral, bearish = get_aaii_sentiment()
 
-    # 2) 주요 거시경제 지표 수집
-    brent_p, brent_c = get_brent_crude()
-    jpy_p, jpy_c = get_usdjpy()
-    tnx_p, tnx_c = get_us10y()
+    # 2) 4대 증시 지수 수집
+    dow_p, dow_c       = get_market_data("^DJI")     # 다우 존스
+    sp500_p, sp500_c   = get_market_data("^GSPC")    # S&P 500
+    nasdaq_p, nasdaq_c = get_market_data("^IXIC")    # 나스닥 종합
+    kospi_p, kospi_c   = get_market_data("^KS11")    # 코스피 지수
+
+    # 3) 7대 거시경제 지표 수집
+    wti_p, wti_c     = get_market_data("CL=F")      # WTI 유가
+    gold_p, gold_c   = get_market_data("GC=F")      # 금 선물
+    slv_p, slv_c     = get_market_data("SI=F")      # 은 선물
+    krw_p, krw_c     = get_market_data("KRW=X")     # 달러/원
+    jpy_p, jpy_c     = get_market_data("JPY=X")     # 달러/엔
+    tnx_p, tnx_c     = get_market_data("^TNX", is_yield=True) # 10년물 국채금리
+    btc_p, btc_c     = get_market_data("BTC-USD")   # 비트코인
 
     title_header = f"📢 <b>[{briefing_title}]</b>\n" if briefing_title else "📈 <b>미국증시 심리 & 거시경제 실시간 리포트</b>\n"
 
@@ -261,10 +256,20 @@ def generate_and_send_report(briefing_title=None):
         f"4. <b>AAII 심리지수:</b> {judge_aaii(bullish, neutral, bearish)}",
         f"5. <b>S&P500 RSI:</b> {judge_rsi(rsi)}",
         "━━━━━━━━━━━━━━━━━━━━",
-        "🌐 <b>[주요 거시경제 지표]</b>",
-        f"🛢️ <b>브렌트유 (Brent):</b> {format_macro_val(brent_p, brent_c, '$')}",
-        f"💴 <b>엔/달러 (USD/JPY):</b> {format_macro_val(jpy_p, jpy_c, '엔')}",
-        f"💵 <b>미 10년물 국채금리:</b> {format_macro_val(tnx_p, tnx_c, '%', is_bp=True)}",
+        "📊 <b>[주요 증시 지수]</b>",
+        f"🇺🇸 <b>다우 존스:</b> {format_val(dow_p, dow_c, 'pt')}",
+        f"🇺🇸 <b>S&P 500:</b> {format_val(sp500_p, sp500_c, 'pt')}",
+        f"🇺🇸 <b>나스닥 종합:</b> {format_val(nasdaq_p, nasdaq_c, 'pt')}",
+        f"🇰🇷 <b>코스피 지수:</b> {format_val(kospi_p, kospi_c, 'pt')}",
+        "━━━━━━━━━━━━━━━━━━━━",
+        "🌐 <b>[핵심 거시경제 지표]</b>",
+        f"🛢️ <b>WTI 유가:</b> {format_val(wti_p, wti_c, '$')}",
+        f"🪙 <b>금 (Gold):</b> {format_val(gold_p, gold_c, '$')}",
+        f"🥈 <b>은 (Silver):</b> {format_val(slv_p, slv_c, '$')}",
+        f"💵 <b>달러/원 (USD/KRW):</b> {format_val(krw_p, krw_c, '원')}",
+        f"💴 <b>달러/엔 (USD/JPY):</b> {format_val(jpy_p, jpy_c, '엔')}",
+        f"🏛️ <b>미 10년물 국채금리:</b> {format_val(tnx_p, tnx_c, '%', is_bp=True)}",
+        f"₿ <b>비트코인 (BTC):</b> {format_val(btc_p, btc_c, '$', is_int=True)}",
         "━━━━━━━━━━━━━━━━━━━━"
     ]
 
